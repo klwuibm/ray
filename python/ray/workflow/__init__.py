@@ -11,6 +11,7 @@ from ray.workflow.api import (
     list_all,
     resume_all,
     wait_for_event,
+    wait_for_event_revised,
     sleep,
     delete,
     wait,

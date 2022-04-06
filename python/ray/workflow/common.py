@@ -23,6 +23,9 @@ WorkflowOutputType = ObjectRef
 MANAGEMENT_ACTOR_NAMESPACE = "workflow"
 MANAGEMENT_ACTOR_NAME = "WorkflowManagementActor"
 STORAGE_ACTOR_NAME = "StorageManagementActor"
+# introduced for event coordination
+EVENT_COORDINATOR_ACTOR_NAMESPACE = "workflow"
+EVENT_COORDINATOR_ACTOR_NAME = "EventCoordinatorActor"
 
 
 def asyncio_run(coro):
@@ -126,6 +129,9 @@ class WorkflowStatus(str, Enum):
     # The workflow failed with a system error, i.e., ray shutdown.
     # It can be resumed.
     RESUMABLE = "RESUMABLE"
+    # The workflow is suspended, waiting for event(s), the control has
+    # been passed to the EventCoordinatorActor.
+    SUSPENDED = "SUSPENDED"
 
 
 @unique
@@ -136,6 +142,7 @@ class StepType(str, Enum):
     ACTOR_METHOD = "ACTOR_METHOD"
     READONLY_ACTOR_METHOD = "READONLY_ACTOR_METHOD"
     WAIT = "WAIT"
+    EVENT = "EVENT" # To indicate to workflow runtime that it is a workflow.wait_for_event()
 
 
 CheckpointModeType = bool

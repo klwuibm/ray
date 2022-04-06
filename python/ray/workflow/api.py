@@ -32,6 +32,8 @@ from ray.workflow import workflow_access
 from ray.workflow.workflow_storage import get_workflow_storage
 from ray.util.annotations import PublicAPI
 
+from ray.workflow import event_coordination
+
 if TYPE_CHECKING:
     from ray.workflow.virtual_actor_class import VirtualActorClass, VirtualActor
     from ray.experimental.dag import DAGNode
@@ -78,6 +80,8 @@ def init(storage: "Optional[Union[str, Storage]]" = None) -> None:
     storage_base.set_global_storage(storage)
     workflow_access.init_management_actor()
     serialization.init_manager()
+
+    #event_coordination.init_event_coordinator_actor()
 
 
 def make_step_decorator(
@@ -345,7 +349,13 @@ def get_status(workflow_id: str) -> WorkflowStatus:
         raise TypeError("workflow_id has to be a string type.")
     return execution.get_status(workflow_id)
 
-
+# ******
+# Do we change this def so that it will directly send the eventProvider, *args, **kwargs
+# to the event_coordinator?  Or do we send that via _workflow_step_executor in step_executor.py?
+# If we do want to send to the event_coordinator from here, then how and where
+# do we do the send?  Do we implement this such that the return is simply calling the event_coordinator?
+# If not, what do we return?
+# *******
 @PublicAPI(stability="beta")
 def wait_for_event(
     event_listener_type: EventListenerType, *args, **kwargs
@@ -355,7 +365,8 @@ def wait_for_event(
             f"Event listener type is {event_listener_type.__name__}"
             ", which is not a subclass of workflow.EventListener"
         )
-
+    # Need to set the step_options with step_type = StepType.EVENT here
+    # return a workflow[Event]
     @step
     def get_message(event_listener_type: EventListenerType, *args, **kwargs) -> Event:
         event_listener = event_listener_type()
@@ -372,6 +383,33 @@ def wait_for_event(
     return message_committed.step(
         event_listener_type, get_message.step(event_listener_type, *args, **kwargs)
     )
+
+# attempting to implement a more general and efficient wait_for_event()
+@PublicAPI(stability="beta")
+def wait_for_event_revised(
+    event_listener_type: EventListenerType, *args, **kwargs
+) -> Workflow[Event]:
+
+    from ray._private import signature
+    from ray.workflow import serialization_context
+    from ray.workflow.common import WorkflowData
+    logger.info("wait_for_event_revised entry")
+
+    # revised to support event step suspend
+    if not issubclass(event_listener_type, EventListener):
+        raise TypeError(
+            f"Event listener type is {event_listener_type.__name__}"
+            ", which is not a subclass of workflow.EventListener"
+        )
+
+    @step
+    def set_step_type(event_listener_type, *args, **kwargs):
+        return args[0]
+
+    w = set_step_type.step(event_listener_type, *args, **kwargs)
+    w.data.step_options.step_type = StepType.EVENT
+
+    return w
 
 
 @PublicAPI(stability="beta")

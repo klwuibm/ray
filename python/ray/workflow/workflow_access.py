@@ -212,6 +212,12 @@ class WorkflowManagementActor:
         else:
             return f"{step_name}_{idx}"
 
+    # *******
+    # For event_coordinator, it needs to call update_step_status to resume the workflow step execution
+    # (1) Do we need a new method to suspend_workflow(self, workflow_id) explicitly?  or we implicitly keep
+    #     the step status as RUNNING but without the _workflow_step_executor holding any CPU for this
+    #     step?
+    # *******
     def update_step_status(
         self,
         workflow_id: str,
@@ -222,8 +228,15 @@ class WorkflowManagementActor:
         # Note: For virtual actor, we could add more steps even if
         # the workflow finishes.
 
+        # logger.info(f"$$$$ entering update_step_status: workflow_id: {workflow_id} step_id: {step_id}"
+        #             f"\n$$$$ status: {status} step_status: {self._step_status[workflow_id]}"
+        # )
+
         self._step_status.setdefault(workflow_id, {})
         if status == common.WorkflowStatus.SUCCESSFUL:
+            logger.info(f"Step status [SUCCESSFUL]"
+                f"\t {step_id}"
+            )
             self._step_status[workflow_id].pop(step_id, None)
         else:
             self._step_status.setdefault(workflow_id, {})[step_id] = status
@@ -232,6 +245,9 @@ class WorkflowManagementActor:
             self._step_output_cache.pop((workflow_id, step_id), None)
 
         if status != common.WorkflowStatus.FAILED and remaining != 0:
+            logger.info(f"$$$$ exiting update_step_status: workflow_id: {workflow_id} step_id: {step_id}"
+                        f"\t status: {status} step_status: {self._step_status[workflow_id]}"
+            )
             return
 
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
@@ -250,6 +266,7 @@ class WorkflowManagementActor:
             self._step_status.pop(workflow_id)
         workflow_postrun_metadata = {"end_time": time.time()}
         wf_store.save_workflow_postrun_metadata(workflow_postrun_metadata)
+
 
     def cancel_workflow(self, workflow_id: str) -> None:
         self._step_status.pop(workflow_id)
