@@ -28,11 +28,15 @@ from ray.workflow.common import (
 from ray.workflow import serialization
 from ray.workflow.event_listener import EventListener, EventListenerType, TimerListener
 from ray.workflow.storage import Storage
-from ray.workflow import workflow_access
+from ray.workflow import workflow_access, workflow_context
 from ray.workflow.workflow_storage import get_workflow_storage
 from ray.util.annotations import PublicAPI
 
+<<<<<<< HEAD
 from ray.workflow import event_coordination
+=======
+from ray.workflow import workflow_event_coordinator
+>>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
 
 if TYPE_CHECKING:
     from ray.workflow.virtual_actor_class import VirtualActorClass, VirtualActor
@@ -79,6 +83,7 @@ def init(storage: "Optional[Union[str, Storage]]" = None) -> None:
             )
     storage_base.set_global_storage(storage)
     workflow_access.init_management_actor()
+    workflow_event_coordinator.get_or_create_event_coordinator_actor()
     serialization.init_manager()
 
     #event_coordination.init_event_coordinator_actor()
@@ -384,17 +389,23 @@ def wait_for_event(
         event_listener_type, get_message.step(event_listener_type, *args, **kwargs)
     )
 
+<<<<<<< HEAD
 # attempting to implement a more general and efficient wait_for_event()
+=======
+>>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
 @PublicAPI(stability="beta")
 def wait_for_event_revised(
     event_listener_type: EventListenerType, *args, **kwargs
 ) -> Workflow[Event]:
 
+<<<<<<< HEAD
     from ray._private import signature
     from ray.workflow import serialization_context
     from ray.workflow.common import WorkflowData
     logger.info("wait_for_event_revised entry")
 
+=======
+>>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
     # revised to support event step suspend
     if not issubclass(event_listener_type, EventListener):
         raise TypeError(
@@ -403,6 +414,7 @@ def wait_for_event_revised(
         )
 
     @step
+<<<<<<< HEAD
     def set_step_type(event_listener_type, *args, **kwargs):
         return args[0]
 
@@ -411,6 +423,15 @@ def wait_for_event_revised(
 
     return w
 
+=======
+    def constructor(event_listener_type, *args, **kwargs):
+        pass
+
+    w = constructor.step(event_listener_type, *args, **kwargs)
+    w.data.step_options.step_type=StepType.EVENT
+
+    return w
+>>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
 
 @PublicAPI(stability="beta")
 def sleep(duration: float) -> Workflow[Event]:

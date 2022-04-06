@@ -22,6 +22,8 @@ WorkflowOutputType = ObjectRef
 
 MANAGEMENT_ACTOR_NAMESPACE = "workflow"
 MANAGEMENT_ACTOR_NAME = "WorkflowManagementActor"
+EVENT_COORDINATOR_NAMESPACE = "workflow"
+EVENT_COORDINATOR_NAME = "EventCoordinatorActor"
 STORAGE_ACTOR_NAME = "StorageManagementActor"
 # introduced for event coordination
 EVENT_COORDINATOR_ACTOR_NAMESPACE = "workflow"
@@ -129,10 +131,15 @@ class WorkflowStatus(str, Enum):
     # The workflow failed with a system error, i.e., ray shutdown.
     # It can be resumed.
     RESUMABLE = "RESUMABLE"
+<<<<<<< HEAD
     # The workflow is suspended, waiting for event(s), the control has
     # been passed to the EventCoordinatorActor.
     SUSPENDED = "SUSPENDED"
 
+=======
+    # This workflow is waiting for one or more external event
+    SUSPENDED = "SUSPENDED"
+>>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
 
 @unique
 class StepType(str, Enum):
@@ -142,7 +149,12 @@ class StepType(str, Enum):
     ACTOR_METHOD = "ACTOR_METHOD"
     READONLY_ACTOR_METHOD = "READONLY_ACTOR_METHOD"
     WAIT = "WAIT"
+<<<<<<< HEAD
     EVENT = "EVENT" # To indicate to workflow runtime that it is a workflow.wait_for_event()
+=======
+    # This workflow step waits for one external event
+    EVENT = "EVENT"
+>>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
 
 
 CheckpointModeType = bool
@@ -544,9 +556,7 @@ class Workflow(Generic[T]):
 @PublicAPI(stability="beta")
 class WorkflowNotFoundError(Exception):
     def __init__(self, workflow_id: str):
-        self.message = (
-            f"Workflow[id={workflow_id}] was referenced but " "doesn't exist."
-        )
+        self.message = f"Workflow[id={workflow_id}] was referenced but doesn't exist."
         super().__init__(self.message)
 
 
