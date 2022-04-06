@@ -1,7 +1,7 @@
 import ray
 from ray import workflow
 from ray.workflow.event_listener import EventListener
-from sqs_listener import SQSEventListener
+#from sqs_listener import SQSEventListener
 
 ray.init(address='auto')
 workflow.init()
@@ -16,21 +16,18 @@ class ExampleEventProvider(EventListener):
     async def event_checkpointed(self, *args):
         pass
 
-
 @workflow.step
 def handle_event(*args):
     return args[0]
 
-@workflow.step
-def e1():
-    return workflow.wait_for_event_revised(ExampleEventProvider, "hello")
-
+# @workflow.step
+# def e1():
+#     return workflow.wait_for_event_revised(ExampleEventProvider, "hello")
+e1 = workflow.wait_for_event_revised(ExampleEventProvider, "e1:hello")
 @workflow.step
 def e2():
-    return workflow.wait_for_event_revised(SQSEventListener, "hello")
-
-e3 = workflow.wait_for_event_revised(ExampleEventProvider, "hello")
-
+    return workflow.wait_for_event_revised(ExampleEventProvider, "e2.step():hello")
+#e2 = workflow.wait_for_event_revised(ExampleEventProvider, "hello")
 @workflow.step
 def w1():
     return 1
@@ -43,9 +40,7 @@ def w2():
 def w3():
     return 3
 
-res = handle_event.step(e3).run()
-
 #res = handle_event.step(workflow.wait_for_event_revised.step(ExampleEventProvider, "hello")).run()
-#res = handle_event.step([e1.step(), e2.step(), w3.step()]).run()
+res = handle_event.step([e1, e2.step(), w3.step()]).run(workflow_id='test_event')
 #res = handle_event.step([w1.step(),w2.step(),w3.step()]).run()
 print(res)

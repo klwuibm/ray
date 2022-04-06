@@ -142,14 +142,6 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
     # further apply them to their inputs, this would eventually
     # apply to all steps except the output step. This avoids
     # detaching the output step.
-    logger.info(f"^^^^^^^ execute_workflow(): executing step {workflow.step_id}")
-    # if workflow.data.step_options.step_type == StepType.EVENT:
-    #     logger.info(f"^^^^^ EVENT: *** name: {workflow.data.name} id: {workflow.step_id} is an EVENT")
-    #     # testEvent = f"Pass wf control to ECA at {workflow.step_id}"
-    #     # result = WorkflowExecutionResult(testEvent, None)
-    #     # workflow._result = result
-    #     # workflow._executed = False
-    #     # return result
     workflow_outputs = []
     with workflow_context.fork_workflow_step_context(
         outer_most_step_id=None,
@@ -157,7 +149,6 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
         checkpoint_context=checkpoint_context,
     ):
         for w in inputs.workflows:
-<<<<<<< HEAD
             # Here: To check w if it is an event
             # if yes, pass the control over to the event_coordinator_actor
             # and return something special (perhaps None, None), perhaps since we are not actually executing w
@@ -168,17 +159,6 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
             if static_ref is None:
                 # The input workflow is not a reference to an executed
                 # workflow
-=======
-
-            logger.info(f"******execute_workflow---- workflow.step_id w.step_id {workflow.step_id} {w.step_id} {w.data.step_options.step_type}")
-
-            static_ref = w.ref
-            if static_ref is None:
-                # The input workflow is not a reference to an executed
-                # workflow .
-                logger.info(f"******execute_workflow---- workflow.step_id w.step_id {workflow.step_id} {w.step_id} {w.data.step_options.step_type}")
-
->>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
                 output = execute_workflow(w).persisted_output
                 static_ref = WorkflowStaticRef(step_id=w.step_id, ref=output)
             workflow_outputs.append(static_ref)
@@ -247,11 +227,6 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
             _record_step_status(
                 workflow.step_id, WorkflowStatus.RUNNING, [volatile_output]
             )
-
-    if 'EVENT_TOKEN' == ray.get(persisted_output):
-        logger.info(f"^^^^ Find EVENT_TOKEN in persisted_out in execute_workflow after step_executor"
-            f"\t{workflow.step_id}"
-        )
 
     result = WorkflowExecutionResult(persisted_output, volatile_output)
     workflow._result = result
@@ -480,25 +455,9 @@ def _workflow_step_executor(
     context = workflow_context.get_workflow_step_context()
     step_type = runtime_options.step_type
     logger.info(f"**** {step_id} func type {step_type}")
-    '''
-    if step_type == StepType.EVENT:
-        event_listener = ray.get(baked_inputs.args)
-        workflow_id = context.workflow_id
-        outer_most_step_id = context.outer_most_step_id
-        logger.info(f"**** {workflow_id} --- {step_id} --- {outer_most_step_id} --- {event_listener}")
-        return "EVENT STEP", None
-    elif step_type == StepType.FUNCTION:
-        # Check if any downstream step is an EVENT step
-        workflow_id = context.workflow_id
-        count = 0
-        for wsr in baked_inputs.workflow_outputs:
-            obj, ref = _resolve_object_ref(wsr.ref)
-            count += 1
-            logger.info(f"**** {workflow_id} --- {step_id} --- {count} --- downstream --- {obj}")
-    '''
+
     context.checkpoint_context.checkpoint = runtime_options.checkpoint
 
-<<<<<<< HEAD
     if step_type == StepType.EVENT:
         logger.info(
             f"%%%%% EVENT Detected: {context.workflow_id} ---- {step_id} ---- {step_type}"
@@ -520,41 +479,11 @@ def _workflow_step_executor(
             _record_step_status(step_id, WorkflowStatus.SUSPENDED)
             logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
             return "EVENT_TOKEN", None
-=======
-    logger.info(f"**** {step_id} Before baked_inputs.resolve(), inside _workflow_step_executor() {baked_inputs}")
->>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
+
 
     # Part 2: resolve inputs
 
-    # before call baked_inputs.resolve(), we might need to poke and check if There
-    # are any wait_for_event in the inputs.  If yes, transfer the control to event_coordinator
-    # and event_coordinator will call _workflow_step_executor() from event_coordinator.
-    # logger.info(f"**** Part 2: {step_id} Before baked_inputs.resolve()")
     args, kwargs = baked_inputs.resolve()
-<<<<<<< HEAD
-    logger.info(f"**** Part 2: {step_id} After baked_inputs.resolve(): args: {args}, kwargs: {kwargs}")
-    #
-    # **************
-    # (1) How do I know step_type == EVENT in this step? Can I use step_type == StepType.EVENT, and if yes,
-    #     Who and where is step_type set to EVENT?
-    # (1a)If previously every thing is ready after baked_inputs.resolve() returns,
-    #     then, should the logic of checking if there are e1, e2, w1 in the backed_inputs be
-    #     performed inside backed_inputs.resolve() before it returns?
-    # (2) How do I know the inputs have wait_for_event?
-    # (3) What is the mechanism for passing the wait to event_coordinator?
-    #     Is that simply calling event_coordinator.passing_control.remote(e1, e2, w1, f)?
-    # (3a) in passing the control to event_coordinator, do we pass all the args, including
-    #     func, context, step_id, backed_inputs, and runtime_options, as well?  so that
-    #     we can call _workflow_step_executor() directly from event_coordinator?
-    # (4) What happens to the execution of _wofkflow_step_executor() after passing the control
-    #     over to event_coordinator? The return is persisted_output, volatile_output.
-    # (5) Should we call _record_step_status to explicitly SUSPENDED?  And ask event_coordinator to change
-    #     the step status to RUNNING when events are ready?
-    # (6) In resuming execution, should event_coordinator calls _workflow_step_executor() directly
-    # **************
-=======
-    logger.info(f"**** {step_id} After baked_inputs.resolve(): args: {args}, kwargs: {kwargs}")
->>>>>>> 88adf63b49fd3de1329a845006ab0d981d18a9f7
 
     # Part 3: execute the step
     store = workflow_storage.get_workflow_storage()
@@ -577,7 +506,6 @@ def _workflow_step_executor(
 
 
     # Part 4: save outputs
-    logger.info(f"**** Entering Part 4: {step_id}")
     if step_type == StepType.READONLY_ACTOR_METHOD:
         if isinstance(volatile_output, Workflow):
             raise TypeError(
@@ -639,9 +567,6 @@ def _workflow_step_executor(
         elif context.last_step_of_workflow:
             # advance the progress of the workflow
             store.advance_progress(step_id)
-        # Need to check if there is an EVENT_TOKEN returned in the persisted_output
-        # of a nested workflow in the return of the current step_id, if yes,
-        # should we record the step status as SUCCESSFUL, or SUSPENDED?
         _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
     logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
     if isinstance(volatile_output, Workflow):
@@ -651,8 +576,6 @@ def _workflow_step_executor(
         volatile_output = volatile_output.run_async(
             workflow_context.get_current_workflow_id()
         )
-
-    logger.info(f"***** {step_id} step_executor exit {persisted_output} ---- {volatile_output}")
 
     return persisted_output, volatile_output
 

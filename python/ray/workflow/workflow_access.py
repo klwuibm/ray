@@ -245,9 +245,9 @@ class WorkflowManagementActor:
             self._step_output_cache.pop((workflow_id, step_id), None)
 
         if status != common.WorkflowStatus.FAILED and remaining != 0:
-            logger.info(f"$$$$ exiting update_step_status: workflow_id: {workflow_id} step_id: {step_id}"
-                        f"\t status: {status} step_status: {self._step_status[workflow_id]}"
-            )
+            # logger.info(f"$$$$ exiting update_step_status: workflow_id: {workflow_id} step_id: {step_id}"
+            #             f"\t status: {status} step_status: {self._step_status[workflow_id]}"
+            # )
             return
 
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
