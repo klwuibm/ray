@@ -401,7 +401,6 @@ def wait_for_event_revised(
         )
 
     @step
-
     def set_step_type(event_listener_type, *args, **kwargs):
         return args[0]
 

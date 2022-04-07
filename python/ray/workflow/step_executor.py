@@ -18,6 +18,8 @@ from ray.workflow.workflow_access import (
     get_or_create_management_actor,
     get_management_actor,
 )
+from ray.workflow.workflow_event_coordinator import get_or_create_event_coordinator_actor
+
 from ray.workflow.common import (
     Workflow,
     WorkflowStatus,
@@ -257,7 +259,7 @@ def execute_workflow(workflow: Workflow) -> "WorkflowExecutionResult":
     """
     # Tail recursion optimization.
     context = {}
-    logger.info("***** execute_workflow")
+    #logger.info("***** execute_workflow")
     while True:
         with workflow_context.fork_workflow_step_context(**context):
             result = _execute_workflow(workflow)
@@ -448,13 +450,13 @@ def _workflow_step_executor(
     Returns:
         Workflow step output.
     """
-    logger.info(f"**** _workflow_step_executor entry")
+    #logger.info(f"**** _workflow_step_executor entry")
 
     # Part 1: update the context for the step
     workflow_context.update_workflow_step_context(context, step_id)
     context = workflow_context.get_workflow_step_context()
     step_type = runtime_options.step_type
-    logger.info(f"**** {step_id} func type {step_type}")
+    #logger.info(f"**** {step_id} func type {step_type}")
 
     context.checkpoint_context.checkpoint = runtime_options.checkpoint
 
@@ -464,8 +466,30 @@ def _workflow_step_executor(
         )
         _record_step_status(step_id, WorkflowStatus.SUSPENDED)
         logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+        args, kwargs = baked_inputs.resolve()
+        if isinstance(args[0], list):
+            eLType = args[0][0]
+            args = args[0][1:]
+        else:
+            eLType = args[0]
+            args = args[1:]
+        logger.info(f"eventListenerType = {eLType} type: {type(eLType)}"
+            f"\t args = {args}"
+            f"\t kwargs = {kwargs}"
+            f"\t outer_most_step_id = {context.outer_most_step_id}"
+        )
+        # transferEventStepOwnership to the workflow_event_coordinator
+        event_coordinator = get_or_create_event_coordinator_actor()
+        event_coordinator.transferEventStepOwnership.remote(
+            context.workflow_id,
+            step_id,
+            context.outer_most_step_id,
+            eLType,
+            *args,
+            **kwargs
+        )
         return "EVENT_TOKEN", None
-    elif step_type == StepType.FUNCTION:
+    else:
         # Check if any downstream step has an EVENT_STEP
         workflow_id = context.workflow_id
         count = 0
@@ -497,7 +521,7 @@ def _workflow_step_executor(
         step_postrun_metadata = {"end_time": time.time()}
         store.save_step_postrun_metadata(step_id, step_postrun_metadata)
         # print out part 3
-        logger.info(f"**** Part 3: {step_id} executed via _wrap_run.")
+        #logger.info(f"**** Part 3: {step_id} executed via _wrap_run.")
     except Exception as e:
         # Always checkpoint the exception.
         commit_step(store, step_id, None, exception=e)
