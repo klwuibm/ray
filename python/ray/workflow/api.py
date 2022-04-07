@@ -493,6 +493,9 @@ def cancel(workflow_id: str) -> None:
     ensure_ray_initialized()
     if not isinstance(workflow_id, str):
         raise TypeError("workflow_id has to be a string type.")
+    
+    cancel_res = ray.get(get_event_coordinator_actor().cancelWorkflowListeners.remote(workflow_id))
+
     return execution.cancel(workflow_id)
 
 
