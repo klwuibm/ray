@@ -29,9 +29,9 @@ class EventCoordinatorActor:
 
     async def poll_event_checkpoint_then_resume \
         (self, workflow_id, current_step_id, outer_most_step_id, \
-        event_listener_handle, *args, **kwargs) -> Tuple[str, str]:
+        event_listener_type, *args, **kwargs) -> Tuple[str, str]:
 
-        event_listener = event_listener_handle()
+        event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
 
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
@@ -40,11 +40,11 @@ class EventCoordinatorActor:
         return (workflow_id, current_step_id)
 
     async def transferEventStepOwnership(self, \
-        workflow_id, current_step_id, outer_most_step_id, event_listener_handle, *args, **kwargs) -> str:
+        workflow_id, current_step_id, outer_most_step_id, event_listener_type, *args, **kwargs) -> str:
         async with self.write_lock:
             self.event_registry[workflow_id][current_step_id] = asyncio.ensure_future( \
                 self.poll_event_checkpoint_then_resume(workflow_id, current_step_id, outer_most_step_id, \
-                event_listener_handle, *args, **kwargs))
+                event_listener_type, *args, **kwargs))
 
         return "REGISTERED"
 
