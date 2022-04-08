@@ -45,15 +45,17 @@ def w2():
 def w3():
     return 3
 
-def __main__(*args, **kwargs):
+async def __main__(*args, **kwargs):
+    import nest_asyncio
+    nest_asyncio.apply()
+
     res = handle_event.step([e1]).run(workflow_id='test_event')
-    time.sleep(30)
+    await asyncio.sleep(30)
     print('first time', res)
-    res = handle_event.step([e1]).run(workflow_id='test_event')
+    res = ray.get(workflow.get_output(workflow_id='test_event'))
     print('second time', res)
     #res = handle_event.step(workflow.wait_for_event_revised.step(ExampleEventProvider, "hello")).run()
     #res = handle_event.step([e1, e2.step(), w3.step()]).run(workflow_id='test_event')
     #res = handle_event.step([w1.step(),w2.step(),w3.step()]).run()
 
-
-__main__()
+asyncio.run(__main__())

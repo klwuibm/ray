@@ -41,9 +41,12 @@ class EventCoordinatorActor:
 
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
-        self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
-        await asyncio.sleep(10)
-        self.wma.run_or_resume(workflow_id)
+        await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
+        logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} PENDING RESUME")
+        await asyncio.sleep(1)
+        ray.get(self.wma.run_or_resume.remote(workflow_id, ignore_existing=True))
+        # self.wma.run_or_resume(workflow_id)
+        # ray.get(workflow.resume(workflow_id))
         logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} RESUMED")
         return (workflow_id, current_step_id)
 
@@ -58,7 +61,7 @@ class EventCoordinatorActor:
 
         return "REGISTERED"
 
-    def checkpointEvent(self, workflow_id, current_step_id, outer_most_step_id, content) -> None:
+    async def checkpointEvent(self, workflow_id, current_step_id, outer_most_step_id, content) -> None:
         ws = WorkflowStorage(workflow_id, storage.create_storage(self.store_url))
         ws.save_step_output(
             current_step_id, content, exception=None, outer_most_step_id=outer_most_step_id
