@@ -3,6 +3,7 @@ from ray import workflow
 from ray.workflow.event_listener import EventListener
 #from sqs_listener import SQSEventListener
 import asyncio
+import time
 
 ray.init(address='auto')
 workflow.init()
@@ -14,7 +15,8 @@ class ExampleEventProvider(EventListener):
     async def poll_for_event(self, *args, **kwargs):
         await asyncio.sleep(10)
         event_content = 'It is working!!'
-        return
+        print(event_content)
+        return event_content
 
     async def event_checkpointed(self, *args):
         pass
@@ -45,10 +47,10 @@ def w3():
 
 async def __main__(*args, **kwargs):
     res = handle_event.step([e1]).run(workflow_id='test_event')
+    print(res)
     #res = handle_event.step(workflow.wait_for_event_revised.step(ExampleEventProvider, "hello")).run()
     #res = handle_event.step([e1, e2.step(), w3.step()]).run(workflow_id='test_event')
     #res = handle_event.step([w1.step(),w2.step(),w3.step()]).run()
     await asyncio.sleep(20)
-    print(res)
 
 asyncio.run(__main__())

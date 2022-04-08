@@ -52,7 +52,7 @@ class EventCoordinatorActor:
 
     async def checkpointEvent(self, workflow_id, current_step_id, outer_most_step_id, content) -> None:
         ws = WorkflowStorage(workflow_id, storage.create_storage(self.wma.get_storage_url()))
-        ws.save_step_output(
+        await ws.save_step_output(
             current_step_id, content, exception=None, outer_most_step_id=outer_most_step_id
         )
 
