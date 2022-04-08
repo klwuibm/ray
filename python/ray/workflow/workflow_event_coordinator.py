@@ -13,6 +13,10 @@ from ray.workflow.workflow_access import (
     get_or_create_management_actor,
     get_management_actor,
 )
+from ray.workflow.storage import Storage, get_global_storage
+from ray.workflow.workflow_storage import WorkflowStorage
+from ray.workflow import serialization
+from ray.workflow import serialization_context
 
 if TYPE_CHECKING:
     from ray.actor import ActorHandle
@@ -24,6 +28,7 @@ logger = logging.getLogger(__name__)
 class EventCoordinatorActor:
     def __init__(self, wma: "workflow_access.WorkflowManagementActor"):
         self.wma = wma
+        self.store_url = ray.get(self.wma.get_storage_url.remote())
         self.event_registry: Dict[str, Dict[str, asyncio.Future]] = {}
         self.write_lock = asyncio.Lock()
 
@@ -33,10 +38,10 @@ class EventCoordinatorActor:
 
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
-
-        await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
-        self.wma.run_or_resume(workflow_id)
-
+        logger.info(f"poll_event_checkpoint_then_resume ---- {event_content} {current_step_id}")
+        self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
+        ray.get(self.wma.run_or_resume(workflow_id))
+        logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id}")
         return (workflow_id, current_step_id)
 
     async def transferEventStepOwnership(self, \
@@ -50,11 +55,14 @@ class EventCoordinatorActor:
 
         return "REGISTERED"
 
-    async def checkpointEvent(self, workflow_id, current_step_id, outer_most_step_id, content) -> None:
-        ws = WorkflowStorage(workflow_id, storage.create_storage(self.wma.get_storage_url()))
-        await ws.save_step_output(
+    def checkpointEvent(self, workflow_id, current_step_id, outer_most_step_id, content) -> None:
+        ws = WorkflowStorage(workflow_id, storage.create_storage(self.store_url))
+        outer_most_step_id = "__main__.handle_event"
+        logger.info(f"checkpointEvent getting ws ---- {workflow_id} {current_step_id} {outer_most_step_id} {ws}")
+        ws.save_step_output(
             current_step_id, content, exception=None, outer_most_step_id=outer_most_step_id
         )
+        logger.info(f"checkpointEvent output saved ---- {workflow_id}")
 
     async def cancelWorkflowListeners(self, workflow_id) -> str:
         async with self.write_lock:
