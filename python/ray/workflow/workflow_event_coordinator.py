@@ -42,6 +42,8 @@ class EventCoordinatorActor:
     async def transferEventStepOwnership(self, \
         workflow_id, current_step_id, outer_most_step_id, event_listener_type, *args, **kwargs) -> str:
         async with self.write_lock:
+            if workflow_id not in self.event_registry:
+                self.event_registry[workflow_id] = {}
             self.event_registry[workflow_id][current_step_id] = asyncio.ensure_future( \
                 self.poll_event_checkpoint_then_resume(workflow_id, current_step_id, outer_most_step_id, \
                 event_listener_type, *args, **kwargs))
