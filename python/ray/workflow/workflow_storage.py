@@ -165,7 +165,6 @@ class WorkflowStorage:
                     self._workflow_id,
                     self._storage,
                 )
-                logger.info(f"promise --- {self._key_step_output(step_id)} {ret} {self._workflow_id} ")
                 tasks.append(promise)
                 # tasks.append(self._put(self._key_step_output(step_id), ret))
                 dynamic_output_id = step_id
@@ -183,9 +182,7 @@ class WorkflowStorage:
                 #     self._put(self._key_step_exception(step_id), exception))
 
         # Finish checkpointing.
-        logger.info(f"save_step_output before asyncio_run {len(tasks)}")
         asyncio_run(asyncio.gather(*tasks))
-        logger.info("save_step_output after asyncio_run")
         # NOTE: if we update the dynamic output before
         # finishing checkpointing, then during recovery, the dynamic could
         # would point to a checkpoint that does not exist.

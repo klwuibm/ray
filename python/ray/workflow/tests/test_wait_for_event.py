@@ -47,12 +47,13 @@ def w3():
 
 def __main__(*args, **kwargs):
     res = handle_event.step([e1]).run(workflow_id='test_event')
+    time.sleep(30)
     print('first time', res)
+    res = handle_event.step([e1]).run(workflow_id='test_event')
+    print('second time', res)
     #res = handle_event.step(workflow.wait_for_event_revised.step(ExampleEventProvider, "hello")).run()
     #res = handle_event.step([e1, e2.step(), w3.step()]).run(workflow_id='test_event')
     #res = handle_event.step([w1.step(),w2.step(),w3.step()]).run()
-    time.sleep(20)
-    res = handle_event.step([e1]).run(workflow_id='test_event')
-    print('second time',res)
+
 
 __main__()
