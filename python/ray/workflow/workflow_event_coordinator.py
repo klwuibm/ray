@@ -43,10 +43,7 @@ class EventCoordinatorActor:
         event_content = await event_listener.poll_for_event(*args, **kwargs)
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
         logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} PENDING RESUME")
-        await asyncio.sleep(1)
-        ray.get(self.wma.run_or_resume.remote(workflow_id, ignore_existing=True))
-        # self.wma.run_or_resume(workflow_id)
-        # ray.get(workflow.resume(workflow_id))
+        self.wma.run_or_resume.remote(workflow_id)
         logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} RESUMED")
         return (workflow_id, current_step_id)
 
