@@ -45,12 +45,12 @@ def w2():
 def w3():
     return 3
 
-async def __main__(*args, **kwargs):
+def __main__(*args, **kwargs):
     res = handle_event.step([e1]).run(workflow_id='test_event')
     print(res)
     #res = handle_event.step(workflow.wait_for_event_revised.step(ExampleEventProvider, "hello")).run()
     #res = handle_event.step([e1, e2.step(), w3.step()]).run(workflow_id='test_event')
     #res = handle_event.step([w1.step(),w2.step(),w3.step()]).run()
-    await asyncio.sleep(20)
+    time.sleep(20)
 
-asyncio.run(__main__())
+__main__()
