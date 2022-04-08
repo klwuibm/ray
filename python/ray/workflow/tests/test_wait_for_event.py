@@ -4,6 +4,7 @@ from ray.workflow.event_listener import EventListener
 #from sqs_listener import SQSEventListener
 import asyncio
 import time
+import random
 
 ray.init(address='auto')
 workflow.init()
@@ -13,9 +14,8 @@ class ExampleEventProvider(EventListener):
         pass
 
     async def poll_for_event(self, *args, **kwargs):
-        await asyncio.sleep(5)
-        event_content = 'It is working!!'
-        print(event_content)
+        await asyncio.sleep(random.uniform(3, 10))
+        event_content = args[0]
         return event_content
 
     async def event_checkpointed(self, *args):
@@ -49,7 +49,7 @@ async def __main__(*args, **kwargs):
     import nest_asyncio
     nest_asyncio.apply()
 
-    res = handle_event.step([e1]).run(workflow_id='test_event')
+    res = handle_event.step([e1,e2.step(),w1.step(),w2.step()]).run(workflow_id='test_event')
     await asyncio.sleep(30)
     print('first time', res)
     res = ray.get(workflow.get_output(workflow_id='test_event'))
