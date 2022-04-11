@@ -31,6 +31,7 @@ from ray.workflow.common import (
     WorkflowStaticRef,
     asyncio_run,
     CheckpointMode,
+    EventToken,
 )
 
 import inspect
@@ -151,12 +152,6 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
         checkpoint_context=checkpoint_context,
     ):
         for w in inputs.workflows:
-            # Here: To check w if it is an event
-            # if yes, pass the control over to the event_coordinator_actor
-            # and return something special (perhaps None, None), perhaps since we are not actually executing w
-            # logger.info(f"^^^^^ inputs.workflows: {workflow.step_id} has a downstream step: id: {w.step_id}")
-            # if w.data.step_options.step_type == StepType.EVENT:
-            #     logger.info(f"^^^^^ EVENT: &&& id: {w.step_id} is an EVENT")
             static_ref = w.ref
             if static_ref is None:
                 # The input workflow is not a reference to an executed
@@ -211,15 +206,6 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
         workflow_data.step_options,
     )
 
-    # short-circuit after allowing the event_step to return a special token
-    # if workflow.data.step_options.step_type == StepType.EVENT:
-    #     logger.info(f"^^^^^ EVENT: id: {workflow.step_id} is an EVENT")
-    #     testEvent = f"Pass wf control to ECA at {workflow.step_id}"
-    #     result = WorkflowExecutionResult(testEvent, None)
-    #     workflow._result = result
-    #     workflow._executed = False
-    #     return result
-
     # Stage 4: post processing outputs
     if step_options.step_type != StepType.READONLY_ACTOR_METHOD:
         if not step_options.allow_inplace:
@@ -232,7 +218,11 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
 
     result = WorkflowExecutionResult(persisted_output, volatile_output)
     workflow._result = result
-    workflow._executed = True
+
+    if persisted_output == EventToken:
+        workflow._executed = False
+    else:
+        workflow._executed = True
     return result
 
 
@@ -488,21 +478,21 @@ def _workflow_step_executor(
             *args,
             **kwargs
         )
-        return "EVENT_TOKEN", None
+        return EventToken, None
     else:
-        # Check if any downstream step has an EVENT_STEP
+        # Check if any downstream steps has returned an EventToken
         workflow_id = context.workflow_id
         count = 0
         for wsr in baked_inputs.workflow_outputs:
             obj, ref = _resolve_object_ref(wsr.ref)
             logger.info(f"%%%%% EVENT_TOKEN Detected {step_id} baked_inputs.workflow_outputs: {obj}")
-            if obj == 'EVENT_TOKEN':
+            if obj == EventToken:
                 count += 1
         if count > 0:
-            logger.info(f"%%%%% {workflow_id} --- {step_id} --- {count} --- downstream EVENT_TOKEN")
+            logger.info(f"%%%%% {workflow_id} --- {step_id} has {count} --- downstream EVENT_TOKEN")
             _record_step_status(step_id, WorkflowStatus.SUSPENDED)
             logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-            return "EVENT_TOKEN", None
+            return EventToken, None
 
 
     # Part 2: resolve inputs
@@ -591,8 +581,15 @@ def _workflow_step_executor(
         elif context.last_step_of_workflow:
             # advance the progress of the workflow
             store.advance_progress(step_id)
-        _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
-    logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
+
+        if persisted_output == EventToken:
+            _record_step_status(step_id, WorkflowStatus.SUSPENDED)
+        else:
+            _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
+    if persisted_output == EventToken:
+        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+    else:
+        logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
     if isinstance(volatile_output, Workflow):
         # This is the case where a step method is called in the virtual actor.
         # We need to run the method to get the final result.

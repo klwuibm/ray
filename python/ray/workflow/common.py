@@ -29,6 +29,9 @@ STORAGE_ACTOR_NAME = "StorageManagementActor"
 EVENT_COORDINATOR_ACTOR_NAMESPACE = "workflow"
 EVENT_COORDINATOR_ACTOR_NAME = "EventCoordinatorActor"
 
+#Special token to return in Part 1 of _workflow_step_executor, when the step is an event step,
+#or a step which has at least one downstream steps that is an event step.
+EventToken = "EVENT_TOKEN"
 
 def asyncio_run(coro):
     try:

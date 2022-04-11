@@ -88,14 +88,23 @@ def _resolve_workflow_output(workflow_id: Optional[str], output: ray.ObjectRef) 
                 )
         raise WorkflowExecutionError(workflow_id) from e
     if workflow_id is not None:
-        try:
-            ray.get(actor.report_success.remote(workflow_id))
-        except Exception:
+        if output == common.EventToken:
+            try:
+                ray.get(actor.report_suspension.remote(workflow_id))
+            except Exception:
+                logger.warning(
+                    "Could not inform the workflow management actor "
+                    "about the suspension of the workflow."
+                )
+        else:
+            try:
+                ray.get(actor.report_success.remote(workflow_id))
+            except Exception:
             # the actor does not exist
-            logger.warning(
-                "Could not inform the workflow management actor "
-                "about the success of the workflow."
-            )
+                logger.warning(
+                    "Could not inform the workflow management actor "
+                    "about the success of the workflow."
+                )
     return output
 
 
@@ -386,6 +395,15 @@ class WorkflowManagementActor:
             workflow_id: The ID of the workflow.
         """
         logger.error(f"Workflow job [id={workflow_id}] failed.")
+        self._workflow_outputs.pop(workflow_id, None)
+
+    def report_suspension(self, workflow_id: str) -> None:
+        """Report the suspendsion of a workflow_id.
+
+        Args:
+            workflow_id: The ID of the workflow.
+        """
+        logger.info(f"Workflow job [id={workflow_id}] suspended.")
         self._workflow_outputs.pop(workflow_id, None)
 
     def report_success(self, workflow_id: str) -> None:
