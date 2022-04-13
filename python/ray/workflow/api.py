@@ -402,7 +402,7 @@ def wait_for_event_revised(
 
     @step
     def set_step_type(event_listener_type, *args, **kwargs):
-        return args[0]
+        pass
 
     w = set_step_type.step(event_listener_type, *args, **kwargs)
     w.data.step_options.step_type = StepType.EVENT
@@ -493,7 +493,7 @@ def cancel(workflow_id: str) -> None:
     ensure_ray_initialized()
     if not isinstance(workflow_id, str):
         raise TypeError("workflow_id has to be a string type.")
-    
+
     cancel_res = ray.get(get_event_coordinator_actor().cancelWorkflowListeners.remote(workflow_id))
 
     return execution.cancel(workflow_id)

@@ -451,9 +451,6 @@ def _workflow_step_executor(
     context.checkpoint_context.checkpoint = runtime_options.checkpoint
 
     if step_type == StepType.EVENT:
-        logger.info(
-            f"%%%%% EVENT Detected: {context.workflow_id} ---- {step_id} ---- {step_type}"
-        )
         _record_step_status(step_id, WorkflowStatus.SUSPENDED)
         logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
         args, kwargs = baked_inputs.resolve()
@@ -463,7 +460,8 @@ def _workflow_step_executor(
         else:
             eLType = args[0]
             args = args[1:]
-        logger.info(f"eventListenerType = {eLType} type: {type(eLType)}"
+        logger.info(f"%%% EVENT Detected: {context.workflow_id} --- {step_id}"
+            f"\t eventListenerType = {eLType} type: {type(eLType)}"
             f"\t args = {args}"
             f"\t kwargs = {kwargs}"
             f"\t outer_most_step_id = {context.outer_most_step_id}"
