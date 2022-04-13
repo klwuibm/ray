@@ -42,7 +42,7 @@ class EventCoordinatorActor:
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
-        await self.cancelWorkflowListeners(workflow_id)
+        # await self.cancelWorkflowListeners(workflow_id)
         logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} PENDING RESUME")
         self.wma.run_or_resume.remote(workflow_id, ignore_existing = True)
         logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} RESUMED")
