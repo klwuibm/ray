@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 @ray.remote(num_cpus=0)
 class EventCoordinatorActor:
+    """Track event steps and checkpoint arrived data before resuming a workflow """
+
     def __init__(self, wma: "workflow_access.WorkflowManagementActor"):
         import nest_asyncio
         nest_asyncio.apply()
@@ -36,8 +38,9 @@ class EventCoordinatorActor:
         self.write_lock = asyncio.Lock()
 
     async def poll_event_checkpoint_then_resume \
-        (self, workflow_id, current_step_id, outer_most_step_id, \
-        event_listener_type, *args, **kwargs) -> Tuple[str, str]:
+        (self, workflow_id:str, current_step_id:str, outer_most_step_id:str, \
+        event_listener_type:EventListener, *args, **kwargs) -> Tuple[str, str]:
+        """Poll event listener; checkpoint event; resume the workflow """
 
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
@@ -50,7 +53,21 @@ class EventCoordinatorActor:
         return (workflow_id, current_step_id)
 
     async def transferEventStepOwnership(self, \
-        workflow_id, current_step_id, outer_most_step_id, event_listener_type, *args, **kwargs) -> str:
+        workflow_id:str, current_step_id:str, outer_most_step_id:str, \
+        event_listener_type:EventListener, *args, **kwargs) -> str:
+        """Transfer one event step from workflow execution to event coordinator.
+
+        Args:
+            workflow_id: The ID of the workflow.
+            current_step_id: The ID of the current event step.
+            outer_most_step_id: The ID of the outer most step.
+            event_listener_type: The event listener class used to connect to the event provider.
+            *args, **kwargs: Optional parameters, such as connection info, to be passed to the event listener.
+
+        Returns:
+            "REGISTERED"
+        """
+
         async with self.write_lock:
             if workflow_id not in self.event_registry:
                 self.event_registry[workflow_id] = {}
@@ -60,14 +77,24 @@ class EventCoordinatorActor:
 
         return "REGISTERED"
 
-    async def checkpointEvent(self, workflow_id, current_step_id, outer_most_step_id, content) -> None:
+    async def checkpointEvent(self, \
+        workflow_id:str, current_step_id:str, outer_most_step_id:str, content:Any) -> None:
+        """Save received event content to workflow checkpoint """
+
         ws = WorkflowStorage(workflow_id, storage.create_storage(self.store_url))
         ws.save_step_output(
             current_step_id, content, exception=None, outer_most_step_id=outer_most_step_id
         )
-        logger.info(f"checkpointEvent output saved ---- {workflow_id} {current_step_id}")
 
-    async def cancelWorkflowListeners(self, workflow_id) -> str:
+    async def cancelWorkflowListeners(self, workflow_id:str) -> str:
+        """Cancel all event listeners associated with the workflow.
+        Args:
+            workflow_id: The ID of the workflow.
+
+        Returns:
+            "CANCELLED"
+        """
+
         async with self.write_lock:
             if workflow_id in self.event_registry.keys():
                 listeners = self.event_registry[workflow_id]
@@ -79,6 +106,7 @@ class EventCoordinatorActor:
 
 def init_event_coordinator_actor() -> None:
     """Initialize EventCoordinatorActor"""
+
     workflow_manager = get_management_actor()
     event_coordinator = EventCoordinatorActor.options(
         name=common.EVENT_COORDINATOR_NAME,
@@ -94,6 +122,7 @@ def get_event_coordinator_actor() -> "ActorHandle":
 
 def get_or_create_event_coordinator_actor() -> "ActorHandle":
     """Get or create EventCoordinatorActor"""
+
     try:
         event_coordinator = get_event_coordinator_actor()
     except ValueError:
