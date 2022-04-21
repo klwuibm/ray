@@ -44,12 +44,8 @@ class EventCoordinatorActor:
 
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
-        if event_content is not None:
-            await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
-        # await self.cancelWorkflowListeners(workflow_id)
-            logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} PENDING RESUME")
-            self.wma.run_or_resume.remote(workflow_id, ignore_existing = True)
-            logger.info(f"poll_event_checkpoint_then_resume ---- {workflow_id} RESUMED")
+        await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
+        self.wma.run_or_resume.remote(workflow_id, ignore_existing = True)
         return (workflow_id, current_step_id)
 
     async def transferEventStepOwnership(self, \
@@ -71,6 +67,9 @@ class EventCoordinatorActor:
         async with self.write_lock:
             if workflow_id not in self.event_registry:
                 self.event_registry[workflow_id] = {}
+            if current_step_id in self.event_registry[workflow_id]:
+                self.event_registry[workflow_id][current_step_id].cancel()
+                self.event_registry[workflow_id].pop(current_step_id)
             self.event_registry[workflow_id][current_step_id] = asyncio.ensure_future( \
                 self.poll_event_checkpoint_then_resume(workflow_id, current_step_id, outer_most_step_id, \
                 event_listener_type, *args, **kwargs))
