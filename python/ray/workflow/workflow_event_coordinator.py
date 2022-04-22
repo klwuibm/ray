@@ -67,10 +67,10 @@ class EventCoordinatorActor:
         async with self.write_lock:
             if workflow_id not in self.event_registry:
                 self.event_registry[workflow_id] = {}
-            if current_step_id in self.event_registry[workflow_id]:
-                self.event_registry[workflow_id][current_step_id].cancel()
-                self.event_registry[workflow_id].pop(current_step_id)
-            self.event_registry[workflow_id][current_step_id] = asyncio.ensure_future( \
+            if current_step_id not in self.event_registry[workflow_id]:
+                # self.event_registry[workflow_id][current_step_id].cancel()
+                # self.event_registry[workflow_id].pop(current_step_id)
+                self.event_registry[workflow_id][current_step_id] = asyncio.ensure_future( \
                 self.poll_event_checkpoint_then_resume(workflow_id, current_step_id, outer_most_step_id, \
                 event_listener_type, *args, **kwargs))
 
