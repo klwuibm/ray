@@ -483,8 +483,8 @@ def _workflow_step_executor(
         count = 0
         for wsr in baked_inputs.workflow_outputs:
             obj, ref = _resolve_object_ref(wsr.ref)
-            logger.info(f"%%%%% EVENT_TOKEN Detected {step_id} baked_inputs.workflow_outputs: {obj}")
             if obj == EventToken:
+                logger.info(f"%%%%% EVENT_TOKEN Detected {step_id} baked_inputs.workflow_outputs: {obj}")
                 count += 1
         if count > 0:
             logger.info(f"%%%%% {workflow_id} --- {step_id} has {count} --- downstream EVENT_TOKEN")
