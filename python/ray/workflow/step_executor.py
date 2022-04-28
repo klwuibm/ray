@@ -453,29 +453,19 @@ def _workflow_step_executor(
     if step_type == StepType.EVENT:
         _record_step_status(step_id, WorkflowStatus.SUSPENDED)
         logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+        # execute workflow.wait_for_event_revised.set_step_type to
+        # call EventCoordinatorActor.transferEventStepOwnership()
         args, kwargs = baked_inputs.resolve()
-        if isinstance(args[0], list):
-            eLType = args[0][0]
-            args = args[0][1:]
-        else:
-            eLType = args[0]
-            args = args[1:]
-        logger.info(f"%%% EVENT Detected: {context.workflow_id} --- {step_id}"
-            f"\t eventListenerType = {eLType} type: {type(eLType)}"
-            f"\t args = {args}"
-            f"\t kwargs = {kwargs}"
-            f"\t outer_most_step_id = {context.outer_most_step_id}"
-        )
-        # transferEventStepOwnership to the workflow_event_coordinator
-        event_coordinator = get_or_create_event_coordinator_actor()
-        event_coordinator.transferEventStepOwnership.remote(
-            context.workflow_id,
-            step_id,
-            context.outer_most_step_id,
-            eLType,
-            *args,
-            **kwargs
-        )
+        try:
+            with workflow_context.workflow_execution():
+                persisted_output, volatile_output = _wrap_run(
+                    func, runtime_options, *args, **kwargs
+                )
+        except Exception as e:
+            # Always checkpoint the exception.
+            commit_step(store, step_id, None, exception=e)
+            raise e
+
         return EventToken, None
     else:
         # Check if any downstream steps has returned an EventToken

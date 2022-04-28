@@ -24,6 +24,7 @@ from ray.workflow.common import (
     WorkflowStepRuntimeOptions,
     StepType,
     asyncio_run,
+    EventToken,
 )
 from ray.workflow import serialization
 from ray.workflow.event_listener import EventListener, EventListenerType, TimerListener
@@ -402,7 +403,26 @@ def wait_for_event_revised(
 
     @step
     def set_step_type(event_listener_type, *args, **kwargs):
-        pass
+        # transfer the event step ownership to the EventCoordinatorActor
+        context = workflow_context.get_workflow_step_context()
+        workflow_id = context.workflow_id
+        outer_most_step_id = context.outer_most_step_id
+        step_id = workflow_context.get_current_step_id()
+        event_coordinator = workflow_event_coordinator.get_or_create_event_coordinator_actor()
+        logger.info(f"*** transfering event step ownership to ECA"
+            f"\t workflow_id: {workflow_id}"
+            f"\t step_id: {step_id}"
+            f"\t outer_most_step_id: {outer_most_step_id}"
+        )
+        event_coordinator.transferEventStepOwnership.remote(
+            workflow_id,
+            step_id,
+            outer_most_step_id,
+            event_listener_type,
+            *args,
+            **kwargs
+        )
+
 
     w = set_step_type.step(event_listener_type, *args, **kwargs)
     w.data.step_options.step_type = StepType.EVENT
