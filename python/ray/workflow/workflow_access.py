@@ -215,7 +215,7 @@ class WorkflowManagementActor:
             current_output = None
 
         result = recovery.resume_workflow_step(
-                workflow_id, step_id, self._store.storage_url, current_output
+            workflow_id, step_id, self._store.storage_url, current_output
         )
         latest_output = LatestWorkflowOutput(
             result.persisted_output, result.volatile_output, workflow_id, step_id
