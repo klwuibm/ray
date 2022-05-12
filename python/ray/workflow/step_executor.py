@@ -36,6 +36,8 @@ from ray.workflow.common import (
 
 import inspect
 
+from ray.exceptions import GetTimeoutError
+
 if TYPE_CHECKING:
     from ray.workflow.common import (
         WorkflowRef,
@@ -81,7 +83,7 @@ def _resolve_dynamic_workflow_refs(workflow_refs: "List[WorkflowRef]"):
     storage_url = context.storage_url
     workflow_ref_mapping = []
     for workflow_ref in workflow_refs:
-        step_ref = ray.get(
+        step_ref, _ = ray.get(
             workflow_manager.get_cached_step_output.remote(
                 workflow_id, workflow_ref.step_id
             )
@@ -145,6 +147,10 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
     # further apply them to their inputs, this would eventually
     # apply to all steps except the output step. This avoids
     # detaching the output step.
+
+    workflow_manager = get_management_actor()
+    workflow_id = workflow._workflow_id
+
     workflow_outputs = []
     with workflow_context.fork_workflow_step_context(
         outer_most_step_id=None,
@@ -173,7 +179,8 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
         # to get the ObjectRef of the output before execution.
         # Here we use a dummy ObjectRef, because _record_step_status does not
         # even use it (?!).
-        _record_step_status(workflow.step_id, WorkflowStatus.RUNNING, [ray.put(None)])
+        _record_step_status(workflow.step_id, WorkflowStatus.RUNNING, [ray.put(None), ray.put(None)])
+        # _set_my_status(step_id, WorkflowStatus.RUNNING)
         # Note: we need to be careful about workflow context when
         # calling the executor directly.
         # TODO(suquark): We still have recursive Python calls.
@@ -198,13 +205,21 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
 
 
     # Stage 3: execution
-    persisted_output, volatile_output = executor(
-        workflow_data.func_body,
-        step_context,
-        workflow.step_id,
-        baked_inputs,
-        workflow_data.step_options,
-    )
+
+    savedp, savedv = ray.get(workflow_manager.get_cached_step_output.remote(workflow_id, workflow.step_id))
+    status = ray.get(workflow_manager.get_step_status.remote(workflow_id, workflow.step_id))
+
+    if savedp is None or savedv is None or status == WorkflowStatus.SUSPENDED:
+        persisted_output, volatile_output = executor(
+            workflow_data.func_body,
+            step_context,
+            workflow.step_id,
+            baked_inputs,
+            workflow_data.step_options,
+            )
+    else:
+        persisted_output = savedp
+        volatile_output = savedv
 
     # Stage 4: post processing outputs
     if step_options.step_type != StepType.READONLY_ACTOR_METHOD:
@@ -213,16 +228,12 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
             # be recorded earlier than SUCCESSFUL. This caused some
             # confusion during development.
             _record_step_status(
-                workflow.step_id, WorkflowStatus.RUNNING, [volatile_output]
+                workflow.step_id, WorkflowStatus.RUNNING, [persisted_output, volatile_output]
             )
 
     result = WorkflowExecutionResult(persisted_output, volatile_output)
     workflow._result = result
 
-    if persisted_output == EventToken:
-        workflow._executed = False
-    else:
-        workflow._executed = True
     return result
 
 
@@ -249,7 +260,6 @@ def execute_workflow(workflow: Workflow) -> "WorkflowExecutionResult":
     """
     # Tail recursion optimization.
     context = {}
-    #logger.info("***** execute_workflow")
     while True:
         with workflow_context.fork_workflow_step_context(**context):
             result = _execute_workflow(workflow)
@@ -263,6 +273,7 @@ def execute_workflow(workflow: Workflow) -> "WorkflowExecutionResult":
         result.persisted_output = ray.put(result.persisted_output)
     if not isinstance(result.persisted_output, WorkflowOutputType):
         result.volatile_output = ray.put(result.volatile_output)
+
     return result
 
 
@@ -440,21 +451,18 @@ def _workflow_step_executor(
     Returns:
         Workflow step output.
     """
-    #logger.info(f"**** _workflow_step_executor entry")
 
     # Part 1: update the context for the step
     workflow_context.update_workflow_step_context(context, step_id)
     context = workflow_context.get_workflow_step_context()
     step_type = runtime_options.step_type
-    #logger.info(f"**** {step_id} func type {step_type}")
 
     context.checkpoint_context.checkpoint = runtime_options.checkpoint
 
+    # Checking for EVENT step_type
     if step_type == StepType.EVENT:
-        _record_step_status(step_id, WorkflowStatus.SUSPENDED)
-        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-        # execute workflow.wait_for_event_revised.set_step_type to
-        # call EventCoordinatorActor.transferEventStepOwnership()
+        # force a run of workflow.wait_for_event_revised.set_step_type to
+        # transferEventStepOwnership
         args, kwargs = baked_inputs.resolve()
         try:
             with workflow_context.workflow_execution():
@@ -466,22 +474,27 @@ def _workflow_step_executor(
             commit_step(store, step_id, None, exception=e)
             raise e
 
+        _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+
         return EventToken, None
     else:
-        # Check if any downstream steps has returned an EventToken
+        # Checking if any of the downstream steps has returned an EventToken
         workflow_id = context.workflow_id
         count = 0
+        workflow_manager = get_management_actor()
         for wsr in baked_inputs.workflow_outputs:
-            obj, ref = _resolve_object_ref(wsr.ref)
-            if obj == EventToken:
-                logger.info(f"%%%%% EVENT_TOKEN Detected {step_id} baked_inputs.workflow_outputs: {obj}")
-                count += 1
+            # get_cached_step_event_token from the WMA
+            ref = ray.get(workflow_manager.get_cached_step_event_token.remote(
+                workflow_id, wsr.step_id)
+            )
+            if ref is not None:
+                if ray.get(ref) == EventToken:
+                    count += 1
         if count > 0:
-            logger.info(f"%%%%% {workflow_id} --- {step_id} has {count} --- downstream EVENT_TOKEN")
-            _record_step_status(step_id, WorkflowStatus.SUSPENDED)
+            _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
             logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
             return EventToken, None
-
 
     # Part 2: resolve inputs
 
@@ -498,8 +511,6 @@ def _workflow_step_executor(
             )
         step_postrun_metadata = {"end_time": time.time()}
         store.save_step_postrun_metadata(step_id, step_postrun_metadata)
-        # print out part 3
-        #logger.info(f"**** Part 3: {step_id} executed via _wrap_run.")
     except Exception as e:
         # Always checkpoint the exception.
         commit_step(store, step_id, None, exception=e)
@@ -571,9 +582,11 @@ def _workflow_step_executor(
             store.advance_progress(step_id)
 
         if persisted_output == EventToken:
-            _record_step_status(step_id, WorkflowStatus.SUSPENDED)
+            _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+            # _set_my_status(step_id, WorkflowStatus.UPSTREAMSUSPENDED)
         else:
             _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
+            # _set_my_status(step_id, WorkflowStatus.SUCCESSFUL)
     if persisted_output == EventToken:
         logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
     else:
@@ -642,6 +655,7 @@ def _workflow_wait_executor(
         store.advance_progress(step_id)
 
     _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
+    # _set_my_status(step_id, WorkflowStatus.SUCCESSFUL)
     logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
     return persisted_output, None
 
@@ -744,7 +758,6 @@ class _BakedWorkflowInputs:
             self.workflow_refs,
         )
 
-
 def _record_step_status(
     step_id: "StepID",
     status: "WorkflowStatus",
@@ -758,5 +771,17 @@ def _record_step_status(
     ray.get(
         workflow_manager.update_step_status.remote(
             workflow_id, step_id, status, outputs
+        )
+    )
+
+def _get_step_status(
+    step_id: "StepID"
+) -> WorkflowStatus:
+
+    workflow_id = workflow_context.get_current_step_id()
+    workflow_manager = get_management_actor()
+    return ray.get(
+        workflow_manager.get_step_status.remote(
+        workflow_id, step_id
         )
     )

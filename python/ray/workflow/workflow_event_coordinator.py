@@ -45,7 +45,7 @@ class EventCoordinatorActor:
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
-        self.wma.run_or_resume.remote(workflow_id, ignore_existing = True)
+        self.wma.run_or_resume.remote(workflow_id, ignore_existing = True, is_eca_initiated = True)
         return (workflow_id, current_step_id)
 
     async def transferEventStepOwnership(self, \

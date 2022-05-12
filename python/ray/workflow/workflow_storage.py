@@ -102,7 +102,6 @@ class WorkflowStorage:
         Returns:
             Output of the workflow step.
         """
-
         tasks = [
             self._get(self._key_step_output(step_id), no_exception=True),
             self._get(self._key_step_exception(step_id), no_exception=True),
@@ -118,6 +117,7 @@ class WorkflowStorage:
         if exception_err is None:
             raise exception_ret
 
+        logger.info(f"*** in load_step_output: output_err FOUND")
         # In this case, there is no such step
         raise output_err
 

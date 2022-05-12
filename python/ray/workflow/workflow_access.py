@@ -9,6 +9,7 @@ from ray.workflow import recovery
 from ray.workflow import storage
 from ray.workflow import workflow_storage
 from ray.util.annotations import PublicAPI
+from ray.workflow.common import WorkflowStaticRef
 
 if TYPE_CHECKING:
     from ray.actor import ActorHandle
@@ -122,7 +123,8 @@ def cancel_job(obj: ray.ObjectRef):
 
 @dataclass
 class LatestWorkflowOutput:
-    output: ray.ObjectRef
+    persisted_output: ray.ObjectRef
+    volatile_output: ray.ObjectRef
     workflow_id: str
     step_id: "StepID"
 
@@ -142,14 +144,23 @@ class WorkflowManagementActor:
         self._step_output_cache: Dict[Tuple[str, str], LatestWorkflowOutput] = {}
         self._actor_initialized: Dict[str, ray.ObjectRef] = {}
         self._step_status: Dict[str, Dict[str, common.WorkflowStatus]] = {}
+        self._step_event_token: Dict[Tuple[str, str], ray.ObjectRef] = {}
 
     def get_storage_url(self) -> str:
         """Get hte storage URL."""
         return self._store.storage_url
 
-    def get_cached_step_output(
+    def get_cached_step_event_token(
         self, workflow_id: str, step_id: "StepID"
     ) -> ray.ObjectRef:
+        try:
+            return self._step_event_token[(workflow_id, step_id)]
+        except Exception as e:
+            return None
+
+    def get_cached_step_output(
+        self, workflow_id: str, step_id: "StepID"
+    ) -> Tuple[ray.ObjectRef, ray.ObjectRef]:
         """Get the cached result of a step.
 
         Args:
@@ -161,13 +172,15 @@ class WorkflowManagementActor:
             step result. If it does not exist, return None
         """
         try:
-            output = self._step_output_cache[(workflow_id, step_id)].output
-            return output
-        except Exception:
-            return None
+            persisted_output = self._step_output_cache[(workflow_id,step_id)].persisted_output
+            volatile_output = self._step_output_cache[(workflow_id,step_id)].volatile_output
+            return persisted_output, volatile_output
+        except Exception as e:
+            return None, None
 
     def run_or_resume(
-        self, workflow_id: str, ignore_existing: bool = False
+        self, workflow_id: str, ignore_existing: bool = False,
+        is_eca_initiated: Optional[bool] = False
     ) -> "WorkflowExecutionResult":
         """Run or resume a workflow.
 
@@ -184,25 +197,35 @@ class WorkflowManagementActor:
             raise RuntimeError(
                 f"The output of workflow[id={workflow_id}] already exists."
             )
+
+        # if workflow_id in self._my_status:
+        #     self._my_status.pop(workflow_id)
+
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
         workflow_prerun_metadata = {"start_time": time.time()}
         wf_store.save_workflow_prerun_metadata(workflow_prerun_metadata)
         step_id = wf_store.get_entrypoint_step_id()
         try:
-            current_output = self._workflow_outputs[workflow_id].output
+            current_output = self._workflow_outputs[workflow_id].persisted_output
         except KeyError:
             current_output = None
+
+        # if this is called by the ECA
+        if is_eca_initiated:
+            current_output = None
+
         result = recovery.resume_workflow_step(
-            workflow_id, step_id, self._store.storage_url, current_output
+                workflow_id, step_id, self._store.storage_url, current_output
         )
         latest_output = LatestWorkflowOutput(
-            result.persisted_output, workflow_id, step_id
+            result.persisted_output, result.volatile_output, workflow_id, step_id
         )
         self._workflow_outputs[workflow_id] = latest_output
         logger.info(
             f"run_or_resume: {workflow_id}, {step_id}," f"{result.persisted_output}"
+            f"{result.volatile_output}"
         )
-        self._step_output_cache[(workflow_id, step_id)] = latest_output
+        #self._step_output_cache[(workflow_id, step_id)] = latest_output
 
         wf_store.save_workflow_meta(
             common.WorkflowMetaData(common.WorkflowStatus.RUNNING)
@@ -221,12 +244,6 @@ class WorkflowManagementActor:
         else:
             return f"{step_name}_{idx}"
 
-    # *******
-    # For event_coordinator, it needs to call update_step_status to resume the workflow step execution
-    # (1) Do we need a new method to suspend_workflow(self, workflow_id) explicitly?  or we implicitly keep
-    #     the step status as RUNNING but without the _workflow_step_executor holding any CPU for this
-    #     step?
-    # *******
     def update_step_status(
         self,
         workflow_id: str,
@@ -234,36 +251,38 @@ class WorkflowManagementActor:
         status: common.WorkflowStatus,
         outputs: List[ray.ObjectRef],
     ):
+
         # Note: For virtual actor, we could add more steps even if
         # the workflow finishes.
-
-        # logger.info(f"$$$$ entering update_step_status: workflow_id: {workflow_id} step_id: {step_id}"
-        #             f"\n$$$$ status: {status} step_status: {self._step_status[workflow_id]}"
-        # )
-
         self._step_status.setdefault(workflow_id, {})
         if status == common.WorkflowStatus.SUCCESSFUL:
             logger.info(f"Step status [SUCCESSFUL]"
                 f"\t {step_id}"
             )
             self._step_status[workflow_id].pop(step_id, None)
+            self._step_event_token.pop((workflow_id, step_id), None)
         else:
             self._step_status.setdefault(workflow_id, {})[step_id] = status
+
         remaining = len(self._step_status[workflow_id])
-        if status != common.WorkflowStatus.RUNNING:
+
+        if status == common.WorkflowStatus.SUSPENDED:
+            self._step_event_token[(workflow_id, step_id)] = outputs[0]
+
+        if status == common.WorkflowStatus.RUNNING:
+            latest_output = LatestWorkflowOutput(outputs[0], outputs[1], workflow_id, step_id)
+            self._step_output_cache[(workflow_id, step_id)] = latest_output
+        else:
             self._step_output_cache.pop((workflow_id, step_id), None)
 
         if status != common.WorkflowStatus.FAILED and remaining != 0:
-            # logger.info(f"$$$$ exiting update_step_status: workflow_id: {workflow_id} step_id: {step_id}"
-            #             f"\t status: {status} step_status: {self._step_status[workflow_id]}"
-            # )
             return
 
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
 
         if status == common.WorkflowStatus.FAILED:
             if workflow_id in self._workflow_outputs:
-                cancel_job(self._workflow_outputs.pop(workflow_id).output)
+                cancel_job(self._workflow_outputs.pop(workflow_id).persisted_output)
             wf_store.save_workflow_meta(
                 common.WorkflowMetaData(common.WorkflowStatus.FAILED)
             )
@@ -276,10 +295,16 @@ class WorkflowManagementActor:
         workflow_postrun_metadata = {"end_time": time.time()}
         wf_store.save_workflow_postrun_metadata(workflow_postrun_metadata)
 
+    def get_step_status(self, workflow_id: str, step_id: str):
+        if workflow_id not in self._step_status:
+            return common.WorkflowStatus.RESUMABLE
+        if step_id not in self._step_status[workflow_id]:
+            return common.WorkflowStatus.RESUMABLE
+        return self._step_status[workflow_id][step_id]
 
     def cancel_workflow(self, workflow_id: str) -> None:
         self._step_status.pop(workflow_id)
-        cancel_job(self._workflow_outputs.pop(workflow_id).output)
+        cancel_job(self._workflow_outputs.pop(workflow_id).persisted_output)
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
         wf_store.save_workflow_meta(
             common.WorkflowMetaData(common.WorkflowStatus.CANCELED)
@@ -343,7 +368,7 @@ class WorkflowManagementActor:
             workflow result.
         """
         if workflow_id in self._workflow_outputs and name is None:
-            return self._workflow_outputs[workflow_id].output
+            return self._workflow_outputs[workflow_id].persisted_output
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
         meta = wf_store.load_workflow_meta()
         if meta is None:
@@ -363,7 +388,7 @@ class WorkflowManagementActor:
             step_id = wf_store.get_entrypoint_step_id()
         else:
             step_id = name
-            output = self.get_cached_step_output(workflow_id, step_id)
+            output, _ = self.get_cached_step_output(workflow_id, step_id)
             if output is not None:
                 return ray.put(_SelfDereferenceObject(None, output))
 

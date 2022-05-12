@@ -134,7 +134,7 @@ class WorkflowStatus(str, Enum):
     # The workflow failed with a system error, i.e., ray shutdown.
     # It can be resumed.
     RESUMABLE = "RESUMABLE"
-    # This workflow is waiting for one or more external event
+    # This workflow is waiting for at least one external event step
     SUSPENDED = "SUSPENDED"
 
 @unique

@@ -409,11 +409,6 @@ def wait_for_event_revised(
         outer_most_step_id = context.outer_most_step_id
         step_id = workflow_context.get_current_step_id()
         event_coordinator = workflow_event_coordinator.get_or_create_event_coordinator_actor()
-        logger.info(f"*** transfering event step ownership to ECA"
-            f"\t workflow_id: {workflow_id}"
-            f"\t step_id: {step_id}"
-            f"\t outer_most_step_id: {outer_most_step_id}"
-        )
         event_coordinator.transferEventStepOwnership.remote(
             workflow_id,
             step_id,
