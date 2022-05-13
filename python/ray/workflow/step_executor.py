@@ -477,7 +477,7 @@ def _workflow_step_executor(
         _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
         logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
 
-        return EventToken, None
+        return ray.put(EventToken), ray.put(None)
     else:
         # Checking if any of the downstream steps has returned an EventToken
         workflow_id = context.workflow_id
@@ -494,7 +494,7 @@ def _workflow_step_executor(
         if count > 0:
             _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
             logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-            return EventToken, None
+            return ray.put(EventToken), ray.put(None)
 
     # Part 2: resolve inputs
 
