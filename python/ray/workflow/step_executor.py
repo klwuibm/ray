@@ -374,10 +374,10 @@ def _wrap_run(
     # max_retries are for application level failure.
     # For ray failure, we should use max_retries.
     for i in range(runtime_options.max_retries):
-        logger.info(
-            f"{get_step_status_info(WorkflowStatus.RUNNING)}"
-            f"\t[{i + 1}/{runtime_options.max_retries}]"
-        )
+        # logger.info(
+        #     f"{get_step_status_info(WorkflowStatus.RUNNING)}"
+        #     f"\t[{i + 1}/{runtime_options.max_retries}]"
+        # )
         try:
             result = func(*args, **kwargs)
             exception = None
@@ -437,7 +437,7 @@ def _workflow_step_executor(
     baked_inputs: "_BakedWorkflowInputs",
     runtime_options: "WorkflowStepRuntimeOptions",
     inplace: bool = False,
-) -> Tuple[Any, Any]:
+) -> Tuple[Any, Any, Any]:
     """Executor function for workflow step.
 
     Args:
@@ -459,42 +459,41 @@ def _workflow_step_executor(
 
     context.checkpoint_context.checkpoint = runtime_options.checkpoint
 
-    # Checking for EVENT step_type
-    if step_type == StepType.EVENT:
-        # force a run of workflow.wait_for_event_revised.set_step_type to
-        # transferEventStepOwnership
-        args, kwargs = baked_inputs.resolve()
-        try:
-            with workflow_context.workflow_execution():
-                persisted_output, volatile_output = _wrap_run(
-                    func, runtime_options, *args, **kwargs
-                )
-        except Exception as e:
-            # Always checkpoint the exception.
-            commit_step(store, step_id, None, exception=e)
-            raise e
+    workflow_id = context.workflow_id
 
-        _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
-        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-
-        return ray.put(EventToken), ray.put(None)
-    else:
-        # Checking if any of the downstream steps has returned an EventToken
-        workflow_id = context.workflow_id
+    if step_type != StepType.EVENT:
         count = 0
-        workflow_manager = get_management_actor()
+        status = _get_step_status(step_id)
+        if status == WorkflowStatus.SUSPENDED:
+            count += 1
         for wsr in baked_inputs.workflow_outputs:
-            # get_cached_step_event_token from the WMA
-            ref = ray.get(workflow_manager.get_cached_step_event_token.remote(
-                workflow_id, wsr.step_id)
-            )
-            if ref is not None:
-                if ray.get(ref) == EventToken:
-                    count += 1
+            status = _get_step_status(wsr.step_id)
+            logger.info(f"^^^ step: {step_id} -- wsr.step_id: {wsr.step_id} -- status: {status}")
+            if status == WorkflowStatus.SUSPENDED:
+                count += 1
         if count > 0:
+            logger.info(f"^^^ Downstream SUSPENDED detected for step: {step_id} -- {count}")
+            outer_most_step_id = context.outer_most_step_id
             _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+            if outer_most_step_id is not None:
+                _record_step_status(outer_most_step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
             logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
             return ray.put(EventToken), ray.put(None)
+
+        # workflow_manager = get_management_actor()
+        # for wsr in baked_inputs.workflow_outputs:
+        #     # get_cached_step_event_token from the WMA
+        #     ref = ray.get(workflow_manager.get_cached_step_event_token.remote(
+        #         workflow_id, wsr.step_id)
+        #         )
+        #     if ref is not None:
+        #         if ray.get(ref) == EventToken:
+        #             count += 1
+        # if count > 0:
+        #     logger.info(f"^^^ EVENT_TOKEN detected for step: {step_id} -- {count}")
+        #     _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+        #     logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+        #     return ray.put(EventToken), ray.put(None)
 
     # Part 2: resolve inputs
 
@@ -525,6 +524,14 @@ def _workflow_step_executor(
                 "Returning a Workflow from a readonly virtual actor is not allowed."
             )
         assert not isinstance(persisted_output, Workflow)
+    elif step_type == StepType.EVENT:
+        logger.info(f"^^^ EVENT step: {step_id}")
+        outer_most_step_id = context.outer_most_step_id
+        _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+        if outer_most_step_id is not None:
+            _record_step_status(outer_most_step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+        return ray.put(EventToken), ray.put(None)
     else:
         # TODO(suquark): Validate checkpoint options before
         # commit the step.
@@ -577,20 +584,14 @@ def _workflow_step_executor(
             # the volatile_output and persisted_output will be put together
             persisted_output = result.persisted_output
             volatile_output = result.volatile_output
+
+            # _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
+            # logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
+            #
         elif context.last_step_of_workflow:
             # advance the progress of the workflow
             store.advance_progress(step_id)
 
-        if persisted_output == EventToken:
-            _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
-            # _set_my_status(step_id, WorkflowStatus.UPSTREAMSUSPENDED)
-        else:
-            _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
-            # _set_my_status(step_id, WorkflowStatus.SUCCESSFUL)
-    if persisted_output == EventToken:
-        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-    else:
-        logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
     if isinstance(volatile_output, Workflow):
         # This is the case where a step method is called in the virtual actor.
         # We need to run the method to get the final result.
@@ -778,7 +779,7 @@ def _get_step_status(
     step_id: "StepID"
 ) -> WorkflowStatus:
 
-    workflow_id = workflow_context.get_current_step_id()
+    workflow_id = workflow_context.get_current_workflow_id()
     workflow_manager = get_management_actor()
     return ray.get(
         workflow_manager.get_step_status.remote(

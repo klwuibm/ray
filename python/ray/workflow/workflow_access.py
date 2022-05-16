@@ -197,7 +197,7 @@ class WorkflowManagementActor:
             raise RuntimeError(
                 f"The output of workflow[id={workflow_id}] already exists."
             )
-
+        logger.info(f"^^^ step_status: {self._step_status}")
         # if workflow_id in self._my_status:
         #     self._my_status.pop(workflow_id)
 
@@ -254,6 +254,7 @@ class WorkflowManagementActor:
 
         # Note: For virtual actor, we could add more steps even if
         # the workflow finishes.
+        logger.info(f"%%% {step_id} updating status: {status}")
         self._step_status.setdefault(workflow_id, {})
         if status == common.WorkflowStatus.SUCCESSFUL:
             logger.info(f"Step status [SUCCESSFUL]"
@@ -264,9 +265,13 @@ class WorkflowManagementActor:
         else:
             self._step_status.setdefault(workflow_id, {})[step_id] = status
 
+        logger.info(f"^^^ After update step status: {self._step_status}")
         remaining = len(self._step_status[workflow_id])
 
         if status == common.WorkflowStatus.SUSPENDED:
+            logger.info(f"update step status [SUSPENDED]"
+                f"\t {step_id}"
+            )
             self._step_event_token[(workflow_id, step_id)] = outputs[0]
 
         if status == common.WorkflowStatus.RUNNING:
@@ -291,7 +296,7 @@ class WorkflowManagementActor:
             wf_store.save_workflow_meta(
                 common.WorkflowMetaData(common.WorkflowStatus.SUCCESSFUL)
             )
-            self._step_status.pop(workflow_id)
+            # self._step_status.pop(workflow_id)
         workflow_postrun_metadata = {"end_time": time.time()}
         wf_store.save_workflow_postrun_metadata(workflow_postrun_metadata)
 

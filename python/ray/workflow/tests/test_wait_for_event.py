@@ -25,6 +25,22 @@ class ExampleEventProvider(EventListener):
 def handle_event(*args):
     return args[0]
 
+@workflow.step
+def handle_event_1(*args):
+    result = []
+    for item in args[0]:
+        item = 'handle_event_1'+str(item)
+        result.append(item)
+    return result
+
+@workflow.step
+def handle_event_0(*args):
+    result = []
+    for item in args[0]:
+        item = 'handle_event_0'+ str(item)
+        result.append(item)
+    return result
+
 # @workflow.step
 # def e1():
 #     return workflow.wait_for_event_revised(ExampleEventProvider, "hello")
@@ -51,7 +67,8 @@ async def __main__(*args, **kwargs):
     import nest_asyncio
     nest_asyncio.apply()
 
-    res = handle_event.step([e1, e2.step(), w1.step(), w2.step()]).run(workflow_id='test_event')
+    res = handle_event.step(handle_event_1.step(handle_event_0.step([e1, e2.step(), w1.step(), w2.step()]))).run(workflow_id='test_event')
+    await asyncio.sleep(10)
     print('first time', res)
     await asyncio.sleep(40)
     res = ray.get(workflow.get_output(workflow_id='test_event'))
