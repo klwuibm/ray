@@ -29,7 +29,7 @@ def handle_event(*args):
 def handle_event_1(*args):
     result = []
     for item in args[0]:
-        item = 'handle_event_1'+str(item)
+        item = 'handle_event_1_'+str(item)
         result.append(item)
     return result
 
@@ -37,7 +37,7 @@ def handle_event_1(*args):
 def handle_event_0(*args):
     result = []
     for item in args[0]:
-        item = 'handle_event_0'+ str(item)
+        item = 'handle_event_0_'+ str(item)
         result.append(item)
     return result
 

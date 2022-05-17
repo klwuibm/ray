@@ -111,12 +111,14 @@ class WorkflowStaticRef:
     step_id: StepID
     # The ObjectRef of the output.
     ref: ObjectRef
+    # The status of the step execution
+    statusref: ObjectRef
 
     def __hash__(self):
         return hash(self.step_id + self.ref.hex())
 
     def __reduce__(self):
-        return WorkflowStaticRef, (self.step_id, _RefBypass(self.ref))
+        return WorkflowStaticRef, (self.step_id, _RefBypass(self.ref), _RefBypass(self.statusref))
 
 
 @PublicAPI(stability="beta")
@@ -306,9 +308,11 @@ class WorkflowExecutionResult:
     persisted_output: "ObjectRef"
     # Part of result to return to the user but does not require persistence.
     volatile_output: "ObjectRef"
+    # Part of result to handle step status for event processing
+    status: "ObjectRef"
 
     def __reduce__(self):
-        return WorkflowExecutionResult, (self.persisted_output, self.volatile_output)
+        return WorkflowExecutionResult, (self.persisted_output, self.volatile_output, self.status)
 
 
 @dataclass

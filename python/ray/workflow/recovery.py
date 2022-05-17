@@ -15,6 +15,8 @@ from ray.workflow import storage
 from ray.workflow import workflow_storage
 from ray.workflow.step_function import WorkflowStepFunction
 
+import logging
+logger = logging.getLogger(__name__)
 
 class WorkflowStepNotRecoverableError(Exception):
     """Raise the exception when we find a workflow step cannot be recovered
@@ -160,10 +162,10 @@ def _construct_resume_workflow_from_step(
         return recovery_workflow
 
 
-@ray.remote(num_returns=2)
+@ray.remote(num_returns=3)
 def _resume_workflow_step_executor(
     workflow_id: str, step_id: "StepID", store_url: str, current_output: [ray.ObjectRef]
-) -> Tuple[ray.ObjectRef, ray.ObjectRef]:
+) -> Tuple[ray.ObjectRef, ray.ObjectRef, ray.ObjectRef]:
     # TODO (yic): We need better dependency management for virtual actor
     # The current output will always be empty for normal workflow
     # For virtual actor, if it's not empty, it means the previous job is
@@ -188,9 +190,9 @@ def _resume_workflow_step_executor(
             from ray.workflow.step_executor import execute_workflow
 
             result = execute_workflow(r)
-            return result.persisted_output, result.volatile_output
+            return result.persisted_output, result.volatile_output, result.status
     assert isinstance(r, StepID)
-    return wf_store.load_step_output(r), None
+    return wf_store.load_step_output(r), None, None
 
 
 def resume_workflow_step(
@@ -218,10 +220,10 @@ def resume_workflow_step(
     else:
         current_output = [current_output]
 
-    persisted_output, volatile_output = _resume_workflow_step_executor.remote(
+    persisted_output, volatile_output, status = _resume_workflow_step_executor.remote(
         workflow_id, step_id, store_url, current_output
     )
-    return WorkflowExecutionResult(persisted_output, volatile_output)
+    return WorkflowExecutionResult(persisted_output, volatile_output, status)
 
 
 def get_latest_output(workflow_id: str, store: storage.Storage) -> Any:

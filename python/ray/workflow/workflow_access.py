@@ -125,6 +125,7 @@ def cancel_job(obj: ray.ObjectRef):
 class LatestWorkflowOutput:
     persisted_output: ray.ObjectRef
     volatile_output: ray.ObjectRef
+    status: ray.ObjectRef
     workflow_id: str
     step_id: "StepID"
 
@@ -160,7 +161,7 @@ class WorkflowManagementActor:
 
     def get_cached_step_output(
         self, workflow_id: str, step_id: "StepID"
-    ) -> Tuple[ray.ObjectRef, ray.ObjectRef]:
+    ) -> Tuple[ray.ObjectRef, ray.ObjectRef, ray.ObjectRef]:
         """Get the cached result of a step.
 
         Args:
@@ -174,9 +175,10 @@ class WorkflowManagementActor:
         try:
             persisted_output = self._step_output_cache[(workflow_id,step_id)].persisted_output
             volatile_output = self._step_output_cache[(workflow_id,step_id)].volatile_output
-            return persisted_output, volatile_output
+            status = self._step_step_output_cache[(workflow_id, step_id)].status
+            return persisted_output, volatile_output, status
         except Exception as e:
-            return None, None
+            return None, None, None
 
     def run_or_resume(
         self, workflow_id: str, ignore_existing: bool = False,
@@ -218,7 +220,7 @@ class WorkflowManagementActor:
             workflow_id, step_id, self._store.storage_url, current_output
         )
         latest_output = LatestWorkflowOutput(
-            result.persisted_output, result.volatile_output, workflow_id, step_id
+            result.persisted_output, result.volatile_output, result.status, workflow_id, step_id
         )
         self._workflow_outputs[workflow_id] = latest_output
         logger.info(
@@ -275,7 +277,7 @@ class WorkflowManagementActor:
             self._step_event_token[(workflow_id, step_id)] = outputs[0]
 
         if status == common.WorkflowStatus.RUNNING:
-            latest_output = LatestWorkflowOutput(outputs[0], outputs[1], workflow_id, step_id)
+            latest_output = LatestWorkflowOutput(outputs[0], outputs[1], outputs[2], workflow_id, step_id)
             self._step_output_cache[(workflow_id, step_id)] = latest_output
         else:
             self._step_output_cache.pop((workflow_id, step_id), None)
@@ -393,7 +395,7 @@ class WorkflowManagementActor:
             step_id = wf_store.get_entrypoint_step_id()
         else:
             step_id = name
-            output, _ = self.get_cached_step_output(workflow_id, step_id)
+            output, _, _ = self.get_cached_step_output(workflow_id, step_id)
             if output is not None:
                 return ray.put(_SelfDereferenceObject(None, output))
 
