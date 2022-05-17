@@ -200,6 +200,7 @@ class WorkflowManagementActor:
                 f"The output of workflow[id={workflow_id}] already exists."
             )
         logger.info(f"^^^ step_status: {self._step_status}")
+
         # if workflow_id in self._my_status:
         #     self._my_status.pop(workflow_id)
 
@@ -236,6 +237,7 @@ class WorkflowManagementActor:
         if workflow_id not in self._step_status:
             self._step_status[workflow_id] = {}
             logger.info(f"Workflow job [id={workflow_id}] started.")
+
         return result
 
     def gen_step_id(self, workflow_id: str, step_name: str) -> str:
@@ -374,6 +376,9 @@ class WorkflowManagementActor:
             An object reference that can be used to retrieve the
             workflow result.
         """
+
+        logger.info(f"$$$$$$ get_output {self._workflow_outputs}")
+
         if workflow_id in self._workflow_outputs and name is None:
             return self._workflow_outputs[workflow_id].persisted_output
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)
@@ -436,7 +441,7 @@ class WorkflowManagementActor:
             workflow_id: The ID of the workflow.
         """
         logger.info(f"Workflow job [id={workflow_id}] suspended.")
-        self._workflow_outputs.pop(workflow_id, None)
+        # self._workflow_outputs.pop(workflow_id, None)
 
     def report_success(self, workflow_id: str) -> None:
         """Report the success of a workflow_id.
