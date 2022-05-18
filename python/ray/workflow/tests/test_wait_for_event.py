@@ -14,7 +14,7 @@ class ExampleEventProvider(EventListener):
         pass
 
     async def poll_for_event(self, *args, **kwargs):
-        await asyncio.sleep(random.uniform(3, 10))
+        await asyncio.sleep(random.uniform(5, 15))
         event_content = args[0]
         return event_content
 
@@ -51,12 +51,16 @@ def e2():
 #e2 = workflow.wait_for_event_revised(ExampleEventProvider, "hello")
 @workflow.step
 def w1():
-    time.sleep(20)
+    for i in range(5):
+        time.sleep(4)
+        print(f"w1 {i}")
     return 1
 
 @workflow.step
 def w2():
-    time.sleep(25)
+    for i in range(5):
+        time.sleep(5)
+        print(f"w2 {i}")
     return 2
 
 @workflow.step
@@ -68,7 +72,7 @@ async def __main__(*args, **kwargs):
     nest_asyncio.apply()
 
     res = handle_event.step(handle_event_1.step(handle_event_0.step([e1, e2.step(), w1.step(), w2.step()]))).run(workflow_id='test_event')
-    await asyncio.sleep(10)
+    await asyncio.sleep(5)
     print('first time', res)
     await asyncio.sleep(40)
     res = ray.get(workflow.get_output(workflow_id='test_event'))
