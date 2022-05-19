@@ -5,7 +5,7 @@ import asyncio
 import threading
 
 import ray
-from ray.workflow import common, recovery, storage, workflow_storage, workflow_access
+from ray.workflow import common, recovery, step_executor, storage, workflow_storage, workflow_access
 from ray.util.annotations import PublicAPI
 from ray.workflow.event_listener import EventListener, EventListenerType, TimerListener
 from ray.workflow.workflow_access import (
@@ -35,7 +35,10 @@ class EventCoordinatorActor:
         self.wma = wma
         self.store_url = ray.get(self.wma.get_storage_url.remote())
         self.event_registry: Dict[str, Dict[str, asyncio.Future]] = {}
+        self._num_ownership_transferred: Dict[str, int] = {}
         self.write_lock = asyncio.Lock()
+        self._num_event_received: Dict[str, int] = {}
+        self._time_to_resume: Dict[str, float] = {}
 
     async def poll_event_checkpoint_then_resume \
         (self, workflow_id:str, current_step_id:str, outer_most_step_id:str, \
@@ -45,7 +48,35 @@ class EventCoordinatorActor:
         event_listener = event_listener_type()
         event_content = await event_listener.poll_for_event(*args, **kwargs)
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
-        self.wma.run_or_resume.remote(workflow_id, ignore_existing = True, is_eca_initiated = True)
+        logger.info(f"ECA received an event")
+        # check if a wma.run_or_resume() should be called
+        async with self.write_lock:
+            if workflow_id not in self._num_event_received.keys():
+                self._num_event_received[workflow_id] = 1
+            else:
+                self._num_event_received[workflow_id] += 1
+            if workflow_id not in self._time_to_resume.keys():
+                self._time_to_resume[workflow_id] = time.time()+0.5
+            fire_resume = False
+            if time.time() > self._time_to_resume[workflow_id]:
+                try:
+                    root_status = ray.get(self.wma.get_workflow_root_status.remote(workflow_id))
+                except KeyError:
+                    logger.info(f"ECA could not get root_status from wma: {workflow_id} KeyError")
+                    pass
+                logger.info(f"ECA: root_status: {root_status}")
+                status, _ = step_executor._resolve_object_ref(root_status)
+                if status == common.WorkflowStatus.SUSPENDED:
+                    fire_resume = True
+            elif self._num_event_received[workflow_id] == self._num_ownership_transferred[workflow_id]:
+                # the last event has been received
+                await asyncio.sleep(self._time_to_resume[workflow_id]-time.time())
+                fire_resume = True
+            if fire_resume:
+                logger.info(f"ECA launch run_or_resume")
+                ray.get(self.wma.run_or_resume.remote(workflow_id, ignore_existing = True, is_eca_initiated = True))
+                self._time_to_resume[workflow_id] = time.time() + 0.5
+
         return (workflow_id, current_step_id)
 
     async def transferEventStepOwnership(self, \
@@ -65,6 +96,10 @@ class EventCoordinatorActor:
         """
 
         async with self.write_lock:
+            if workflow_id not in self._num_ownership_transferred.keys():
+                self._num_ownership_transferred[workflow_id] = 1
+            else:
+                self._num_ownership_transferred[workflow_id] += 1
             if workflow_id not in self.event_registry:
                 self.event_registry[workflow_id] = {}
             if current_step_id not in self.event_registry[workflow_id]:

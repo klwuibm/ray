@@ -164,9 +164,29 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
                 # workflow
                 wkresult = execute_workflow(w)
                 output = wkresult.persisted_output
-                status_ref = wkresult.status
-                static_ref = WorkflowStaticRef(step_id=w.step_id, ref=output, statusref=status_ref)
+                status, _ = _resolve_object_ref(wkresult.status)
+                if workflow.step_id ==  '__main__.handle_event_0':
+                    logger.info(f"in Stage 1: {w.step_id} -- {status}")
+                static_ref = WorkflowStaticRef(step_id=w.step_id, ref=output, status=status)
             workflow_outputs.append(static_ref)
+
+    # checking if there is any downstream step is SUSPENDED via workflow_outputs
+    count = 0
+    for wsr in workflow_outputs:
+        status = wsr.status
+        if status == WorkflowStatus.SUSPENDED:
+            # logger.info(f"^^^ SUSPENDED detected: step: {workflow.step_id} -- wsr.step_id: {wsr.step_id} -- status: {status}")
+            count += 1
+    if count > 0:
+        # logger.info(f"^^^ Downstream SUSPENDED detected for step: {workflow.step_id} -- {count}")
+        outer_most_step_id = step_context.outer_most_step_id
+        _record_step_status(workflow.step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+        if outer_most_step_id is not None:
+            _record_step_status(outer_most_step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
+        logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
+        result = WorkflowExecutionResult(ray.put(EventToken), ray.put(None), WorkflowStatus.SUSPENDED)
+        return result
+
 
     baked_inputs = _BakedWorkflowInputs(
         args=inputs.args,
@@ -181,7 +201,7 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
         # to get the ObjectRef of the output before execution.
         # Here we use a dummy ObjectRef, because _record_step_status does not
         # even use it (?!).
-        _record_step_status(workflow.step_id, WorkflowStatus.RUNNING, [ray.put(None), ray.put(None), ray.put(None)])
+        _record_step_status(workflow.step_id, WorkflowStatus.RUNNING, [ray.put(None), ray.put(None)])
         # _set_my_status(step_id, WorkflowStatus.RUNNING)
         # Note: we need to be careful about workflow context when
         # calling the executor directly.
@@ -209,9 +229,10 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
     # Stage 3: execution
 
     savedp, savedv, saveds = ray.get(workflow_manager.get_cached_step_output.remote(workflow_id, workflow.step_id))
-    status = ray.get(workflow_manager.get_step_status.remote(workflow_id, workflow.step_id))
-
-    if savedp is None or savedv is None or status == WorkflowStatus.SUSPENDED:
+    status = saveds
+    # logger.info(f"^^^ Stage 3: step: {workflow.step_id} -- savedp:{savedp} - savedv: {savedv} - saved status: {status}")
+    relaunched = False
+    if savedp is None or (status == WorkflowStatus.SUSPENDED and step_options.step_type != StepType.EVENT):
         persisted_output, volatile_output, _status = executor(
             workflow_data.func_body,
             step_context,
@@ -219,6 +240,7 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
             baked_inputs,
             workflow_data.step_options,
             )
+        relaunched = True
     else:
         persisted_output = savedp
         volatile_output = savedv
@@ -230,9 +252,10 @@ def _execute_workflow(workflow: "Workflow") -> "WorkflowExecutionResult":
             # TODO: [Possible flaky bug] Here the RUNNING state may
             # be recorded earlier than SUCCESSFUL. This caused some
             # confusion during development.
-            _record_step_status(
-                workflow.step_id, WorkflowStatus.RUNNING, [persisted_output, volatile_output, ray.put(WorkflowStatus.RUNNING)]
-            )
+            if relaunched:
+                _record_step_status(
+                    workflow.step_id, WorkflowStatus.RUNNING, [persisted_output, volatile_output]
+                )
 
     result = WorkflowExecutionResult(persisted_output, volatile_output, _status)
     workflow._result = result
@@ -276,9 +299,8 @@ def execute_workflow(workflow: Workflow) -> "WorkflowExecutionResult":
         result.persisted_output = ray.put(result.persisted_output)
     if not isinstance(result.persisted_output, WorkflowOutputType):
         result.volatile_output = ray.put(result.volatile_output)
-    if not isinstance(result.status, WorkflowOutputType):
-        result.status = ray.put(result.status)
-
+    status, _ = _resolve_object_ref(result.status)
+    # logger.info(f"&&& inside execute_workflow: {workflow.step_id} -- {status}")
     return result
 
 
@@ -398,7 +420,7 @@ def _wrap_run(
             )
             exception = e
 
-    current_status = ray.put(WorkflowStatus.RUNNING)
+    current_status = WorkflowStatus.RUNNING
     step_type = runtime_options.step_type
     if runtime_options.catch_exceptions:
         if step_type == StepType.FUNCTION or step_type == StepType.EVENT:
@@ -467,23 +489,6 @@ def _workflow_step_executor(
 
     workflow_id = context.workflow_id
 
-    if step_type != StepType.EVENT:
-        count = 0
-        for wsr in baked_inputs.workflow_outputs:
-            status_ref = wsr.statusref
-            status, _ = _resolve_object_ref(status_ref)
-            if status == WorkflowStatus.SUSPENDED:
-                logger.info(f"^^^ step: {step_id} -- wsr.step_id: {wsr.step_id} -- status: {status}")
-                count += 1
-        if count > 0:
-            logger.info(f"^^^ Downstream SUSPENDED detected for step: {step_id} -- {count}")
-            outer_most_step_id = context.outer_most_step_id
-            _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None), ray.put(WorkflowStatus.SUSPENDED)])
-            if outer_most_step_id is not None:
-                _record_step_status(outer_most_step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None), ray.put(WorkflowStatus.SUSPENDED)])
-            logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-            return ray.put(EventToken), ray.put(None), ray.put(WorkflowStatus.SUSPENDED)
-
     # Part 2: resolve inputs
 
     args, kwargs = baked_inputs.resolve()
@@ -511,14 +516,15 @@ def _workflow_step_executor(
                 "Returning a Workflow from a readonly virtual actor is not allowed."
             )
         assert not isinstance(persisted_output, Workflow)
+    # detecting if this step is an EVENT step
     elif step_type == StepType.EVENT:
-        logger.info(f"^^^ EVENT step: {step_id}")
+        # logger.info(f"^^^ EVENT step: {step_id}")
         outer_most_step_id = context.outer_most_step_id
-        _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None), ray.put(WorkflowStatus.SUSPENDED)])
+        _record_step_status(step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
         if outer_most_step_id is not None:
-            _record_step_status(outer_most_step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None), ray.put(WorkflowStatus.SUSPENDED)])
+            _record_step_status(outer_most_step_id, WorkflowStatus.SUSPENDED, [ray.put(EventToken), ray.put(None)])
         logger.info(get_step_status_info(WorkflowStatus.SUSPENDED))
-        return ray.put(EventToken), ray.put(None), ray.put(WorkflowStatus.SUSPENDED)
+        return ray.put(EventToken), ray.put(None), WorkflowStatus.SUSPENDED
     else:
         # TODO(suquark): Validate checkpoint options before
         # commit the step.
@@ -645,7 +651,7 @@ def _workflow_wait_executor(
     _record_step_status(step_id, WorkflowStatus.SUCCESSFUL)
     # _set_my_status(step_id, WorkflowStatus.SUCCESSFUL)
     logger.info(get_step_status_info(WorkflowStatus.SUCCESSFUL))
-    return persisted_output, None, ray.put(WorkflowStatus.SUCCESSFUL)
+    return persisted_output, None, WorkflowStatus.SUCCESSFUL
 
 
 @ray.remote(num_returns=3)

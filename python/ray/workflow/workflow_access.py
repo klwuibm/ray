@@ -125,7 +125,7 @@ def cancel_job(obj: ray.ObjectRef):
 class LatestWorkflowOutput:
     persisted_output: ray.ObjectRef
     volatile_output: ray.ObjectRef
-    status: ray.ObjectRef
+    status: "WorkflowStatus"  # used to indicate if a step is SUSPENDED
     workflow_id: str
     step_id: "StepID"
 
@@ -142,26 +142,22 @@ class WorkflowManagementActor:
         # Cache step output. It is used for step output lookup of
         # "WorkflowRef". The dictionary entry is removed when the status of
         # a step is marked as finished (successful or failed).
+        # For efficient EVENT processing, the cache is used to hold the ObjectRef
+        # of the step output, including status, across different run_or_resume()
+        # calls initiated by the ECA. The entire output cache would not be removed
+        # until the workflow is finally successful or failed.
         self._step_output_cache: Dict[Tuple[str, str], LatestWorkflowOutput] = {}
         self._actor_initialized: Dict[str, ray.ObjectRef] = {}
         self._step_status: Dict[str, Dict[str, common.WorkflowStatus]] = {}
-        self._step_event_token: Dict[Tuple[str, str], ray.ObjectRef] = {}
 
     def get_storage_url(self) -> str:
         """Get hte storage URL."""
         return self._store.storage_url
 
-    def get_cached_step_event_token(
-        self, workflow_id: str, step_id: "StepID"
-    ) -> ray.ObjectRef:
-        try:
-            return self._step_event_token[(workflow_id, step_id)]
-        except Exception as e:
-            return None
 
     def get_cached_step_output(
         self, workflow_id: str, step_id: "StepID"
-    ) -> Tuple[ray.ObjectRef, ray.ObjectRef, ray.ObjectRef]:
+    ) -> Tuple[ray.ObjectRef, ray.ObjectRef, "WorkflowStatus"]:
         """Get the cached result of a step.
 
         Args:
@@ -175,7 +171,7 @@ class WorkflowManagementActor:
         try:
             persisted_output = self._step_output_cache[(workflow_id,step_id)].persisted_output
             volatile_output = self._step_output_cache[(workflow_id,step_id)].volatile_output
-            status = self._step_step_output_cache[(workflow_id, step_id)].status
+            status = self._step_output_cache[(workflow_id, step_id)].status
             return persisted_output, volatile_output, status
         except Exception as e:
             return None, None, None
@@ -191,6 +187,8 @@ class WorkflowManagementActor:
             ignore_existing: Ignore we already have an existing output. When
             set false, raise an exception if there has already been a workflow
             running with this id
+            is_eca_initiated: indicating if this run_or_resume is initiated by
+            the workflow_event_coordinator.
 
         Returns:
             Workflow execution result that contains the state and output.
@@ -199,7 +197,7 @@ class WorkflowManagementActor:
             raise RuntimeError(
                 f"The output of workflow[id={workflow_id}] already exists."
             )
-        logger.info(f"^^^ step_status: {self._step_status}")
+        # logger.info(f"^^^ step_status: {self._step_status}")
         # if workflow_id in self._my_status:
         #     self._my_status.pop(workflow_id)
 
@@ -256,28 +254,19 @@ class WorkflowManagementActor:
 
         # Note: For virtual actor, we could add more steps even if
         # the workflow finishes.
-        logger.info(f"%%% {step_id} updating status: {status}")
         self._step_status.setdefault(workflow_id, {})
         if status == common.WorkflowStatus.SUCCESSFUL:
             logger.info(f"Step status [SUCCESSFUL]"
                 f"\t {step_id}"
             )
             self._step_status[workflow_id].pop(step_id, None)
-            self._step_event_token.pop((workflow_id, step_id), None)
         else:
             self._step_status.setdefault(workflow_id, {})[step_id] = status
 
-        logger.info(f"^^^ After update step status: {self._step_status}")
         remaining = len(self._step_status[workflow_id])
 
-        if status == common.WorkflowStatus.SUSPENDED:
-            logger.info(f"update step status [SUSPENDED]"
-                f"\t {step_id}"
-            )
-            self._step_event_token[(workflow_id, step_id)] = outputs[0]
-
-        if status == common.WorkflowStatus.RUNNING:
-            latest_output = LatestWorkflowOutput(outputs[0], outputs[1], outputs[2], workflow_id, step_id)
+        if status == common.WorkflowStatus.RUNNING or status == common.WorkflowStatus.SUSPENDED:
+            latest_output = LatestWorkflowOutput(outputs[0], outputs[1], status, workflow_id, step_id)
             self._step_output_cache[(workflow_id, step_id)] = latest_output
         else:
             self._step_output_cache.pop((workflow_id, step_id), None)
@@ -298,7 +287,6 @@ class WorkflowManagementActor:
             wf_store.save_workflow_meta(
                 common.WorkflowMetaData(common.WorkflowStatus.SUCCESSFUL)
             )
-            # self._step_status.pop(workflow_id)
         workflow_postrun_metadata = {"end_time": time.time()}
         wf_store.save_workflow_postrun_metadata(workflow_postrun_metadata)
 
@@ -417,6 +405,13 @@ class WorkflowManagementActor:
             _SelfDereferenceObject(None, load.remote(wf_store, workflow_id, step_id))
         )
 
+    def get_workflow_root_status(self, workflow_id: str) -> Any:
+        if workflow_id not in self._workflow_outputs.keys():
+            logger.info(f"wma.get_workflow_root_status: worklow {workflow_id} doesn't exist")
+            raise KeyError
+        else:
+            return self._workflow_outputs[workflow_id].status
+
     def get_running_workflow(self) -> List[str]:
         return list(self._workflow_outputs.keys())
 
@@ -436,7 +431,7 @@ class WorkflowManagementActor:
             workflow_id: The ID of the workflow.
         """
         logger.info(f"Workflow job [id={workflow_id}] suspended.")
-        self._workflow_outputs.pop(workflow_id, None)
+
 
     def report_success(self, workflow_id: str) -> None:
         """Report the success of a workflow_id.
