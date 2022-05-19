@@ -234,6 +234,7 @@ class WorkflowManagementActor:
         if workflow_id not in self._step_status:
             self._step_status[workflow_id] = {}
             logger.info(f"Workflow job [id={workflow_id}] started.")
+
         return result
 
     def gen_step_id(self, workflow_id: str, step_name: str) -> str:
@@ -362,6 +363,9 @@ class WorkflowManagementActor:
             An object reference that can be used to retrieve the
             workflow result.
         """
+
+        # logger.info(f"$$$$$$ get_output {self._workflow_outputs}")
+
         if workflow_id in self._workflow_outputs and name is None:
             return self._workflow_outputs[workflow_id].persisted_output
         wf_store = workflow_storage.WorkflowStorage(workflow_id, self._store)

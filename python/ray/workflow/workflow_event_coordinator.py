@@ -50,6 +50,9 @@ class EventCoordinatorActor:
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
         logger.info(f"ECA received an event")
         # check if a wma.run_or_resume() should be called
+        if self.write_lock.locked():
+            return(workflow_id, current_step_id)
+
         async with self.write_lock:
             if workflow_id not in self._num_event_received.keys():
                 self._num_event_received[workflow_id] = 1
@@ -64,7 +67,7 @@ class EventCoordinatorActor:
                 except KeyError:
                     logger.info(f"ECA could not get root_status from wma: {workflow_id} KeyError")
                     pass
-                logger.info(f"ECA: root_status: {root_status}")
+                # logger.info(f"ECA: root_status: {root_status}")
                 status, _ = step_executor._resolve_object_ref(root_status)
                 if status == common.WorkflowStatus.SUSPENDED:
                     fire_resume = True
