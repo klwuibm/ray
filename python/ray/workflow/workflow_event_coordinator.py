@@ -36,7 +36,8 @@ class EventCoordinatorActor:
         self.store_url = ray.get(self.wma.get_storage_url.remote())
         self.event_registry: Dict[str, Dict[str, asyncio.Future]] = {}
         self._num_ownership_transferred: Dict[str, int] = {}
-        self.write_lock = asyncio.Lock()
+        self.transfer_and_event_arrival_lock = asyncio.Lock()
+        self.resume_lock = asyncio.Lock()
         self._num_event_received: Dict[str, int] = {}
         self._time_to_resume: Dict[str, float] = {}
 
@@ -49,15 +50,17 @@ class EventCoordinatorActor:
         event_content = await event_listener.poll_for_event(*args, **kwargs)
         await self.checkpointEvent(workflow_id, current_step_id, outer_most_step_id, event_content)
         logger.info(f"ECA received an event")
-        # check if a wma.run_or_resume() should be called
-        if self.write_lock.locked():
-            return(workflow_id, current_step_id)
 
-        async with self.write_lock:
+        async with self.transfer_and_event_arrival_lock:
             if workflow_id not in self._num_event_received.keys():
                 self._num_event_received[workflow_id] = 1
             else:
                 self._num_event_received[workflow_id] += 1
+        # if self.resume_lock is held by someone else, simply returns
+        if self.resume_lock.locked():
+            return(workflow_id, current_step_id)
+        # check if a wma.run_or_resume() should be called
+        async with self.resume_lock:
             if workflow_id not in self._time_to_resume.keys():
                 self._time_to_resume[workflow_id] = time.time()+0.5
             fire_resume = False
@@ -98,7 +101,7 @@ class EventCoordinatorActor:
             "REGISTERED"
         """
 
-        async with self.write_lock:
+        async with self.transfer_and_event_arrival_lock:
             if workflow_id not in self._num_ownership_transferred.keys():
                 self._num_ownership_transferred[workflow_id] = 1
             else:
